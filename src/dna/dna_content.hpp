@@ -1,48 +1,24 @@
 #pragma once
 
-// Pod identity for THIS firmware build.
-// Edit the values below to match your peripheral.
-//
-// All strings are stored without NUL terminators. Lengths are bytes; each
-// individual field is limited to 255 chars (uint8 length field).
-
-#include "dna_blob.hpp"
+#include <cstddef>
+#include <cstdint>
 
 namespace syzygy::dna {
 
-inline constexpr DnaSpec kPodSpec = {
-    .identity = {
-        .manufacturer = "Example Co",
-        .product      = "POD-EXAMPLE",
-        .part_number  = "POD-EXAMPLE-0001",
-        .revision     = "A",
-        .serial       = "0000000001",
-    },
-    .loads = {
-        .max_5v_mA  = 0,
-        .max_3v3_mA = 100,
-        .max_vio_mA = 50,
-    },
-    .attributes = {
-        .is_lvds       = false,
-        .is_doublewide = false,
-        .is_txr4       = false,
-    },
-    .vio_ranges = {{
-        // SmartVIO range 1: 1.8 V – 3.3 V (in 10 mV units).
-        {.min_10mV = 180, .max_10mV = 330},
-        {},
-        {},
-        {},
-    }},
-    .dna_major          = kDnaMajorVersion,
-    .dna_minor          = kDnaMinorVersion,
-    .required_dna_major = 0,
-    .required_dna_minor = 0,
-};
+// SYZYGY DNA spec version that THIS FIRMWARE implements (served by
+// register_map at sub-addresses 0x0002 / 0x0003). Distinct from the version
+// bytes inside the DNA blob, which describe what spec the DNA *encoder* used.
+inline constexpr std::uint8_t kDnaMajorVersion = 1;
+inline constexpr std::uint8_t kDnaMinorVersion = 1;
 
-inline constexpr std::size_t kPodBlobSize = dna_blob_size(kPodSpec);
+// Maximum DNA payload reserved in flash. The actual blob (header + strings) is
+// patched into this slot post-link by tools/dna_patch.py, driven by a YAML
+// spec. We never build the blob in C++ — the firmware just serves these bytes.
+//
+// 256 bytes leaves room for 40 B header + 216 B of identity strings, which is
+// more than any realistic pod will use.
+inline constexpr std::size_t kPodBlobSize = 256;
 
-inline constexpr auto kPodBlob = build_dna_blob<kPodBlobSize>(kPodSpec);
+extern const std::uint8_t kPodBlob[kPodBlobSize];
 
 }  // namespace syzygy::dna

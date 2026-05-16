@@ -15,42 +15,51 @@ project(
   ],
 )
 
-# This project builds in two modes:
-#   - cross  (meson setup build-fw --cross-file cross/ch32v003.ini): firmware for CH32V003F4U6
-#   - native (meson setup build-tests):                              host unit tests
-# We dispatch on meson.is_cross_build() so the same tree handles both.
+# This project is cross-only: there is no native code to build any more. The
+# only on-host artefact is the Python DNA patcher (tools/dna_patch.py), and
+# its --self-test runs as a meson test below.
+assert(meson.is_cross_build(), 'configure with --cross-file cross/ch32v003.ini')
 
-if meson.is_cross_build()
-  add_project_arguments(
-    '-fno-exceptions',
-    '-fno-rtti',
-    '-fno-threadsafe-statics',
-    '-fno-use-cxa-atexit',
-    '-ffunction-sections',
-    '-fdata-sections',
-    '-fno-common',
-    language : 'cpp',
-  )
-  add_project_arguments(
-    '-ffunction-sections',
-    '-fdata-sections',
-    '-fno-common',
-    language : 'c',
-  )
-  add_project_link_arguments(
-    '-Wl,--gc-sections',
-    '-Wl,--print-memory-usage',
-    '-nostartfiles',
-    # Skip libc/libgloss: xPack ships them only for rv32imac/ilp32, and we
-    # don't use any of their symbols anyway. -nolibc keeps libgcc going
-    # through the driver (so multilib lookup still picks rv32ec/ilp32e).
-    '-nolibc',
-    '-T' + meson.project_source_root() / 'ldscripts' / 'ch32v003.ld',
-    language : ['c', 'cpp'],
-  )
+add_project_arguments(
+  '-fno-exceptions',
+  '-fno-rtti',
+  '-fno-threadsafe-statics',
+  '-fno-use-cxa-atexit',
+  '-ffunction-sections',
+  '-fdata-sections',
+  '-fno-common',
+  language : 'cpp',
+)
+add_project_arguments(
+  '-ffunction-sections',
+  '-fdata-sections',
+  '-fno-common',
+  language : 'c',
+)
+add_project_link_arguments(
+  '-Wl,--gc-sections',
+  '-Wl,--print-memory-usage',
+  '-nostartfiles',
+  # Skip libc/libgloss: xPack ships them only for rv32imac/ilp32, and we
+  # don't use any of their symbols anyway. -nolibc keeps libgcc going
+  # through the driver (so multilib lookup still picks rv32ec/ilp32e).
+  '-nolibc',
+  '-T' + meson.project_source_root() / 'ldscripts' / 'ch32v003.ld',
+  language : ['c', 'cpp'],
+)
 
-  subdir('vendor/ch32v003')
-  subdir('src')
-else
-  subdir('tests')
-endif
+# Python interpreter for the DNA patcher. require pyelftools + pyyaml at
+# configure time so we fail fast if they're missing.
+python = import('python').find_installation(
+  'python3',
+  modules : ['elftools.elf.elffile', 'yaml'],
+)
+
+subdir('vendor/ch32v003')
+subdir('src')
+
+test(
+  'dna_patch_self_test',
+  python,
+  args : [files('tools/dna_patch.py'), '--self-test'],
+)

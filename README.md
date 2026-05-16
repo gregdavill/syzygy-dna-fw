@@ -27,11 +27,12 @@ v1.1](https://syzygyfpga.io/wp-content/uploads/2020/05/Syzygy-DNA-Specification-
 │   ├── i2c_target.{hpp,cpp}       I2C target state machine
 │   ├── register_map.{hpp,cpp}     16-bit subaddr dispatcher
 │   └── dna/
-│       ├── crc16.hpp              constexpr CRC-16/CCITT-FALSE
-│       ├── dna_blob.hpp           constexpr DNA blob builder
-│       └── dna_content.hpp        << pod identity lives here
-├── tests/                         native unit tests
-└── tools/flash.sh                 minichlink wrapper
+│       ├── dna_content.hpp        reservation of the 256-byte DNA slot
+│       └── dna_content.cpp        the placeholder array (patched post-link)
+└── tools/
+    ├── dna_patch.py               YAML -> DNA blob -> patch into ELF
+    ├── dna_example.yaml           default identity baked in by meson
+    └── flash.sh                   minichlink wrapper
 ```
 
 ## Build firmware
@@ -43,33 +44,33 @@ meson compile -C build-fw
 # Produces build-fw/src/syzygy-dna.{elf,bin,hex}
 ```
 
-`-Wl,--print-memory-usage` reports flash/SRAM utilization at link time.
-
-## Build & run host tests
+The DNA blob is **not** baked in by the C++ compiler — `kPodBlob` is reserved
+as a fixed 256-byte zero-filled array, and meson runs `tools/dna_patch.py`
+post-link to overwrite it with the contents of a YAML spec. The default YAML
+is [tools/dna_example.yaml](tools/dna_example.yaml); override with:
 
 ```sh
-nix-shell
-meson setup build-tests
-meson test -C build-tests
+meson setup build-fw --cross-file cross/ch32v003.ini -Ddna_yaml=path/to/your.yaml
 ```
 
-`test_dna_blob` reproduces the POD-CAMERA example from the spec at compile
-time; the published CRC `0x72F9` is checked with `static_assert`.
-
-## Per-unit DNA without recompiling
-
-The firmware bakes a default DNA blob into `.rodata` (the constexpr `kPodBlob`).
-To program different identities (serial numbers, etc.) into otherwise-identical
-firmware, use `tools/dna_patch.py` to overwrite the blob bytes inside an ELF:
+You can also re-spin per-unit identities after the build without recompiling:
 
 ```sh
 tools/dna_patch.py build-fw/src/syzygy-dna.elf my-unit.yaml -o syzygy-dna-SN0001.elf
-tools/dna_patch.py --self-test          # offline check: POD-CAMERA -> 0x72F9
 ```
 
-YAML format: see [tools/dna_example.yaml](tools/dna_example.yaml). The patcher
-recomputes the CRC-16 and fails clearly if the new blob doesn't fit in the slot
-the compiler reserved.
+`-Wl,--print-memory-usage` reports flash/SRAM utilization at link time.
+
+## Run tests
+
+```sh
+meson test -C build-fw
+```
+
+The single test runs `tools/dna_patch.py --self-test`, which reproduces the
+spec's POD-CAMERA example and asserts the published CRC of `0x72F9` — this is
+the only place the DNA layout has a programmatic implementation, so the
+self-test pins it to the spec.
 
 ## Flash
 

@@ -15,3 +15,10 @@ option(
   value : 75,
   description : 'Half-width (mV) of the acceptance window around each nominal R_GA voltage. Spec recommends 75.',
 )
+
+option(
+  'dna_yaml',
+  type : 'string',
+  value : '',
+  description : 'Path to the DNA YAML spec to bake into the firmware ELF post-link. Defaults to tools/dna_example.yaml if empty.',
+)

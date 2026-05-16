@@ -29,7 +29,7 @@ std::uint8_t RegisterMap::read(std::uint16_t addr) {
 
     if (addr >= kDnaBase && addr < kDnaRegionEnd) {
         const std::uint16_t offset = static_cast<std::uint16_t>(addr - kDnaBase);
-        if (offset < dna::kPodBlob.size()) {
+        if (offset < dna::kPodBlobSize) {
             return dna::kPodBlob[offset];
         }
         return 0xFF;
