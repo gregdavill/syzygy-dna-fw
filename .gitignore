@@ -1,0 +1,13 @@
+build-*/
+.cache/
+compile_commands.json
+*.elf
+*.bin
+*.hex
+*.map
+*.o
+*.d
+
+.DS_Store
+.idea/
+.vscode/
