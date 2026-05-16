@@ -56,6 +56,21 @@ meson test -C build-tests
 `test_dna_blob` reproduces the POD-CAMERA example from the spec at compile
 time; the published CRC `0x72F9` is checked with `static_assert`.
 
+## Per-unit DNA without recompiling
+
+The firmware bakes a default DNA blob into `.rodata` (the constexpr `kPodBlob`).
+To program different identities (serial numbers, etc.) into otherwise-identical
+firmware, use `tools/dna_patch.py` to overwrite the blob bytes inside an ELF:
+
+```sh
+tools/dna_patch.py build-fw/src/syzygy-dna.elf my-unit.yaml -o syzygy-dna-SN0001.elf
+tools/dna_patch.py --self-test          # offline check: POD-CAMERA -> 0x72F9
+```
+
+YAML format: see [tools/dna_example.yaml](tools/dna_example.yaml). The patcher
+recomputes the CRC-16 and fails clearly if the new blob doesn't fit in the slot
+the compiler reserved.
+
 ## Flash
 
 ```sh

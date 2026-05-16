@@ -102,6 +102,9 @@ pkgs.mkShell {
     pkgs.git
     pkgs.gnumake          # ch32fun's minichlink uses Make
     pkgs.libusb1          # minichlink talks to WCH-LinkE over USB
+
+    # tools/dna_patch.py: rewrite the DNA blob inside a firmware ELF from YAML
+    (pkgs.python3.withPackages (ps: with ps; [ pyelftools pyyaml ]))
   ];
 
   shellHook = ''

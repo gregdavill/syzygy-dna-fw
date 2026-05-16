@@ -1,0 +1,33 @@
+# Example DNA configuration for tools/dna_patch.py.
+#
+# Strings are stored ASCII, no NUL termination. Each field is limited to 255
+# bytes by the spec.
+#
+# All integer fields are spec-units:
+#   loads.*_mA           current in milliamps (uint16)
+#   vio_ranges[].*_mV    voltage in millivolts; spec stores 10 mV steps, so
+#                        values here must be multiples of 10
+#
+# Up to 4 vio_ranges are allowed; missing ranges are zero-filled.
+
+manufacturer: "Acme Corp"
+product:      "Widget Pro"
+part_number:  "WPRO-2024-Rev2"
+revision:     "B"
+serial:       "SN12345678"
+
+loads:
+  max_5v_mA:  0
+  max_3v3_mA: 150
+  max_vio_mA: 75
+
+attributes:
+  is_lvds:       false
+  is_doublewide: false
+  is_txr4:       false
+
+vio_ranges:
+  - { min_mV: 1800, max_mV: 3300 }
+
+dna_version:          { major: 1, minor: 1 }
+required_dna_version: { major: 0, minor: 0 }
