@@ -11,13 +11,16 @@ namespace syzygy::dna {
 inline constexpr std::uint8_t kDnaMajorVersion = 1;
 inline constexpr std::uint8_t kDnaMinorVersion = 1;
 
-// Maximum DNA payload reserved in flash. The actual blob (header + strings) is
-// patched into this slot post-link by tools/dna_patch.py, driven by a YAML
-// spec. We never build the blob in C++ — the firmware just serves these bytes.
+// Reservation for the DNA payload in flash. tools/dna_patch.py overwrites
+// this slot post-link from a YAML spec.
 //
-// 256 bytes leaves room for 40 B header + 216 B of identity strings, which is
-// more than any realistic pod will use.
-inline constexpr std::size_t kPodBlobSize = 256;
+// Sized to 4096 B to match the full SYZYGY DNA EEPROM region the spec maps at
+// sub-addresses 0x8000–0x8FFF. The actual identity is bounded tighter — the
+// header is 40 B and each of the five string-length fields is a uint8, so an
+// all-max-ASCII identity is 40 + 5*255 = 1315 B — but reserving the full
+// 4096 B is what the EEPROM-size register at 0x0004/0x0005 should report,
+// and it costs negligible flash on this part.
+inline constexpr std::size_t kPodBlobSize = 4096;
 
 extern const std::uint8_t kPodBlob[kPodBlobSize];
 
