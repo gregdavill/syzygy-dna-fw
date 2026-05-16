@@ -1,0 +1,17 @@
+option(
+  'i2c_speed_hz',
+  type : 'integer',
+  min : 10000,
+  max : 400000,
+  value : 100000,
+  description : 'I2C bus speed in Hz. SYZYGY DNA peripherals must support standard-mode; some carriers use fast-mode.',
+)
+
+option(
+  'ga_adc_window_mv',
+  type : 'integer',
+  min : 25,
+  max : 100,
+  value : 75,
+  description : 'Half-width (mV) of the acceptance window around each nominal R_GA voltage. Spec recommends 75.',
+)
