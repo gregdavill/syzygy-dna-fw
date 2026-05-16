@@ -10,8 +10,11 @@ namespace syzygy {
 //   0x0000-0x0005: firmware register fields (read-only versions, EEPROM size)
 //   0x0006-0x02FF: reserved (reads 0xFF, writes ignored)
 //   0x0300-0x7FFF: firmware-specific (unused -> 0xFF, writes ignored)
-//   0x8000-0x8FFF: DNA EEPROM blob (read-only; addresses past the blob length
-//                  return 0xFF, mirroring an unprogrammed EEPROM byte)
+//   0x8000-0x8FFF: 4 KB DNA EEPROM blob (read-only). The identity header +
+//                  strings sit at the front; the tail is zero-padded by
+//                  tools/dna_patch.py. A consumer is expected to honor the
+//                  full_length field in header bytes 0-1 to find the end of
+//                  the valid identity.
 //   0x9000-0xFFFF: reserved
 struct RegisterMap {
     // Read one byte at the given sub-address. Never NACKs at the I2C layer;

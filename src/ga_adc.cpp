@@ -6,13 +6,17 @@ extern "C" {
 
 #include <array>
 
-namespace syzygy {
-namespace {
-
-// Configured at meson level; injected as -DGA_ADC_WINDOW_MV=...
+// Half-width (mV) of the acceptance window around each nominal R_GA voltage.
+// Set at configure time by meson (-DGA_ADC_WINDOW_MV=...); the fallback here
+// is the spec's recommended 75 mV.
 #ifndef GA_ADC_WINDOW_MV
 #define GA_ADC_WINDOW_MV 75
 #endif
+
+namespace syzygy {
+namespace {
+
+constexpr int kGaWindowMv = GA_ADC_WINDOW_MV;
 
 // Nominal R_GA voltages from spec Table 1, in millivolts.
 // Index 0 -> address 0x30, index 15 -> address 0x3F.
@@ -63,7 +67,7 @@ std::optional<std::uint8_t> resolve_geographical_address() {
 
     for (std::size_t i = 0; i < kNominalMv.size(); ++i) {
         const int delta = static_cast<int>(mv) - static_cast<int>(kNominalMv[i]);
-        if (delta >= -GA_ADC_WINDOW_MV && delta <= GA_ADC_WINDOW_MV) {
+        if (delta >= -kGaWindowMv && delta <= kGaWindowMv) {
             return static_cast<std::uint8_t>(0x30 + i);
         }
     }

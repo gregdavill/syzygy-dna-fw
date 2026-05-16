@@ -4,7 +4,7 @@ option(
   min : 10000,
   max : 400000,
   value : 100000,
-  description : 'I2C bus speed in Hz. SYZYGY DNA peripherals must support standard-mode; some carriers use fast-mode.',
+  description : 'I2C bus speed in Hz (100 kHz standard, 400 kHz fast).',
 )
 
 option(

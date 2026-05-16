@@ -10,7 +10,7 @@ v1.1](https://syzygyfpga.io/wp-content/uploads/2020/05/Syzygy-DNA-Specification-
 - I2C target on PC1 (SDA) / PC2 (SCL), 16-bit sub-address framing
 - Firmware register file (FW & DNA versions, EEPROM size)
 - 40-byte DNA header + ASCII strings, CRC-16/CCITT-FALSE protected,
-  built at compile time
+  patched into the ELF post-link from a YAML spec
 
 ## Layout
 
@@ -27,7 +27,7 @@ v1.1](https://syzygyfpga.io/wp-content/uploads/2020/05/Syzygy-DNA-Specification-
 │   ├── i2c_target.{hpp,cpp}       I2C target state machine
 │   ├── register_map.{hpp,cpp}     16-bit subaddr dispatcher
 │   └── dna/
-│       ├── dna_content.hpp        reservation of the 256-byte DNA slot
+│       ├── dna_content.hpp        reservation of the 4 KB DNA slot
 │       └── dna_content.cpp        the placeholder array (patched post-link)
 └── tools/
     ├── dna_patch.py               YAML -> DNA blob -> patch into ELF
@@ -45,9 +45,10 @@ meson compile -C build-fw
 ```
 
 The DNA blob is **not** baked in by the C++ compiler — `kPodBlob` is reserved
-as a fixed 256-byte zero-filled array, and meson runs `tools/dna_patch.py`
-post-link to overwrite it with the contents of a YAML spec. The default YAML
-is [tools/dna_example.yaml](tools/dna_example.yaml); override with:
+as a fixed 4096-byte zero-filled array (the full SYZYGY EEPROM region), and
+meson runs `tools/dna_patch.py` post-link to overwrite it with the contents
+of a YAML spec. The default YAML is
+[tools/dna_example.yaml](tools/dna_example.yaml); override with:
 
 ```sh
 meson setup build-fw --cross-file cross/ch32v003.ini -Ddna_yaml=path/to/your.yaml
@@ -103,7 +104,7 @@ External components on the peripheral side:
 | `0x0004 – 0x0005` | R | EEPROM size, big-endian |
 | `0x0006 – 0x02FF` | – | Reserved (reads `0xFF`) |
 | `0x0300 – 0x7FFF` | – | Firmware-specific, unused (reads `0xFF`) |
-| `0x8000 – 0x8FFF` | R | DNA EEPROM blob (`kPodBlob`); beyond blob length returns `0xFF` |
+| `0x8000 – 0x8FFF` | R | DNA EEPROM blob (`kPodBlob`, 4 KB); identity bytes first, zero-padded past `full_length` |
 | `0x9000 – 0xFFFF` | – | Reserved |
 
 Writes are ACKed by the I2C engine but currently dropped (this is a

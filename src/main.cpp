@@ -10,6 +10,11 @@ extern "C" {
 #define SYZYGY_I2C_SPEED_HZ 100000
 #endif
 
+// Retry interval while waiting for a usable R_GA reading from the carrier.
+// Short enough that startup feels instant when the carrier is already up,
+// long enough that we're not slamming the ADC during a slow power ramp.
+static constexpr unsigned kGaRetryDelayMs = 10;
+
 int main() {
     syzygy::system_init();
 
@@ -25,8 +30,7 @@ int main() {
             address = *ga;
             break;
         }
-        // Brief wait, then retry. Carrier may not be fully powered up yet.
-        for (int i = 0; i < 100000; ++i) { asm volatile("nop"); }
+        Delay_Ms(kGaRetryDelayMs);
     }
 
     syzygy::i2c_target_start(address, SYZYGY_I2C_SPEED_HZ);

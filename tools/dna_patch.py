@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-dna_patch: rewrite a syzygy-dna firmware ELF's compiled-in DNA blob from a YAML
+dna_patch: rewrite a syzygy-dna firmware ELF's reserved DNA blob from a YAML
 spec, producing a new ELF.
 
-The firmware embeds a default identity (manufacturer / product / serial / etc.)
-as a constexpr std::array<uint8_t,N> placed in flash. For per-unit programming
-you don't want to recompile just to bump a serial number — this tool reads the
-YAML, builds a new 40-byte header + strings (computing the CRC-16/CCITT-FALSE),
-and writes those bytes over the kPodBlob symbol's slot in the ELF.
+The firmware reserves a fixed-size zero-filled array in flash for the DNA
+payload (see src/dna/dna_content.{hpp,cpp}: `extern const std::uint8_t
+kPodBlob[]`). For per-unit programming you don't want to recompile just to
+bump a serial number — this tool reads the YAML, builds a new 40-byte header
++ strings (computing the CRC-16/CCITT-FALSE), and writes those bytes over
+the kPodBlob symbol's slot in the ELF, zero-padding the tail.
 
   ./tools/dna_patch.py build-fw/src/syzygy-dna.elf identity.yaml -o patched.elf
   ./tools/dna_patch.py --self-test           # offline: verifies POD-CAMERA -> 0x72F9
@@ -18,8 +19,8 @@ from __future__ import annotations
 import argparse
 import struct
 import sys
+from io import BytesIO
 from pathlib import Path
-from typing import Iterable
 
 import yaml
 from elftools.elf.elffile import ELFFile
@@ -30,13 +31,16 @@ HEADER_LEN = 40
 MAX_STRING_LEN = 255       # uint8 length field
 MAX_VIO_RANGES = 4
 
-# Default symbol substring; firmware uses `inline constexpr auto syzygy::dna::kPodBlob`.
+# Default symbol substring; matches the mangled name of
+# `syzygy::dna::kPodBlob` (declared in src/dna/dna_content.hpp).
 DEFAULT_SYMBOL_NEEDLE = "kPodBlob"
 
 
 # ----------------------------------------------------------------------------
 # CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, MSB-first, no reflection, no
-# final XOR). Identical to the constexpr C++ implementation in src/dna/crc16.hpp.
+# final XOR). This is the only implementation of the DNA layout in the
+# project — the firmware never recomputes the CRC; the meson `dna_patch_self_test`
+# test pins this routine to the spec's POD-CAMERA example (CRC = 0x72F9).
 # ----------------------------------------------------------------------------
 
 def crc16_ccitt(data: bytes) -> int:
@@ -75,7 +79,9 @@ def _mv_to_units(name: str, mv: int) -> int:
 
 
 def build_dna_blob(spec: dict) -> bytes:
-    """Build the 40-byte header + strings exactly like src/dna/dna_blob.hpp."""
+    """Build the 40-byte header + concatenated identity strings per SYZYGY DNA
+    spec v1.1 §3.2.5. Returns the bytes the firmware will serve from sub-address
+    0x8000 onwards (caller is responsible for any tail padding)."""
     manufacturer = _require_ascii("manufacturer", spec.get("manufacturer", ""))
     product      = _require_ascii("product",      spec.get("product",      ""))
     part_number  = _require_ascii("part_number",  spec.get("part_number",  ""))
@@ -252,20 +258,20 @@ def main(argv: list[str] | None = None) -> int:
     blob = build_dna_blob(spec)
 
     elf_bytes = bytearray(args.elf_in.read_bytes())
-    with args.elf_in.open("rb") as f:
-        offset, slot_size, sym_name = find_symbol_slot(ELFFile(f), args.symbol)
+    offset, slot_size, sym_name = find_symbol_slot(
+        ELFFile(BytesIO(elf_bytes)), args.symbol
+    )
 
     if len(blob) > slot_size:
         sys.exit(
             f"error: new DNA blob is {len(blob)} bytes but the firmware reserved "
             f"only {slot_size} bytes for {sym_name}.\n"
-            f"       Rebuild firmware with longer placeholder strings in "
-            f"src/dna/dna_content.hpp."
+            f"       Increase kPodBlobSize in src/dna/dna_content.hpp and rebuild."
         )
 
-    elf_bytes[offset : offset + len(blob)] = blob
-    if len(blob) < slot_size:
-        elf_bytes[offset + len(blob) : offset + slot_size] = b"\x00" * (slot_size - len(blob))
+    # Overwrite the slot and zero-pad the tail, so reflashing with a shorter
+    # blob doesn't leave stale bytes from a previous patch.
+    elf_bytes[offset : offset + slot_size] = blob + b"\x00" * (slot_size - len(blob))
 
     args.output.write_bytes(bytes(elf_bytes))
 

@@ -24,13 +24,20 @@ struct TargetState {
 
 TargetState g_state{};
 
+// Read one byte from the register map at the current subaddr and post-increment.
+inline std::uint8_t fetch_and_advance() {
+    const std::uint8_t byte = RegisterMap::read(g_state.subaddr);
+    g_state.subaddr = static_cast<std::uint16_t>(g_state.subaddr + 1);
+    return byte;
+}
+
+// Write one byte through the register map at the current subaddr and post-increment.
+inline void store_and_advance(std::uint8_t byte) {
+    RegisterMap::write(g_state.subaddr, byte);
+    g_state.subaddr = static_cast<std::uint16_t>(g_state.subaddr + 1);
+}
+
 }  // namespace
-}  // namespace syzygy
-
-extern "C" __attribute__((interrupt)) void I2C1_EV_IRQHandler();
-extern "C" __attribute__((interrupt)) void I2C1_ER_IRQHandler();
-
-namespace syzygy {
 
 void i2c_target_start(std::uint8_t address_7bit, std::uint32_t bus_speed_hz) {
     // Toggle peripheral reset to clear residual state, then enable the clock.
@@ -96,8 +103,7 @@ extern "C" __attribute__((interrupt)) void I2C1_EV_IRQHandler() {
         if (transmitting) {
             // Read transaction: subaddr was latched by the preceding write
             // phase; pre-load the first byte into DR.
-            I2C1->DATAR = RegisterMap::read(g_state.subaddr);
-            g_state.subaddr = static_cast<std::uint16_t>(g_state.subaddr + 1);
+            I2C1->DATAR = fetch_and_advance();
             g_state.phase = Phase::DataStream;
         } else {
             g_state.phase = Phase::WaitSubAddrHi;
@@ -107,8 +113,7 @@ extern "C" __attribute__((interrupt)) void I2C1_EV_IRQHandler() {
 
     // EV3: TxE — controller clocking out another byte.
     if (star1 & I2C_STAR1_TXE) {
-        I2C1->DATAR = RegisterMap::read(g_state.subaddr);
-        g_state.subaddr = static_cast<std::uint16_t>(g_state.subaddr + 1);
+        I2C1->DATAR = fetch_and_advance();
     }
 
     // EV2: RxNE — controller sent us a byte.
@@ -124,8 +129,7 @@ extern "C" __attribute__((interrupt)) void I2C1_EV_IRQHandler() {
                 g_state.phase    = Phase::DataStream;
                 break;
             case Phase::DataStream:
-                RegisterMap::write(g_state.subaddr, byte);
-                g_state.subaddr = static_cast<std::uint16_t>(g_state.subaddr + 1);
+                store_and_advance(byte);
                 break;
             case Phase::Idle:
                 break;  // stray byte before ADDR — drop
