@@ -47,8 +47,10 @@ jobs:
       - name: Renode integration tests
         run: nix-shell --run 'pytest tests/renode/ -v'
 
+      # Always upload — when tests fail, the ELF is exactly what you need to
+      # reproduce the failure locally under Renode.
       - name: Upload firmware artifacts
-        if: success()
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: firmware
@@ -57,4 +59,4 @@ jobs:
             build-fw/src/syzygy-dna.bin
             build-fw/src/syzygy-dna.hex
           retention-days: 14
-          if-no-files-found: error
+          if-no-files-found: warn

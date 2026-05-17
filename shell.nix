@@ -2,11 +2,10 @@
 #
 # Usage:
 #   nix-shell                                                 # interactive
-#   nix-shell --run "meson setup build-fw --cross-file cross/ch32v003-nix.ini && meson compile -C build-fw"
+#   nix-shell --run "meson setup build-fw --cross-file cross/ch32v003.ini && meson compile -C build-fw"
 #
 # What this provides:
 #   - meson + ninja              (build system)
-#   - clang/lld                  (for native unit tests)
 #   - xpack-riscv-none-elf-gcc   (RISC-V cross-toolchain, version 14.2.0-3 –
 #                                 this is the version that added rv32ec/ilp32e
 #                                 multilib, required for CH32V003)
@@ -14,6 +13,8 @@
 #                                 1.16.1 portable-dotnet build pulled from the
 #                                 upstream release — not packaged in nixpkgs
 #                                 for darwin)
+#   - python3 + pyelftools + pyyaml + pytest
+#                                (tools/dna_patch.py + tests/renode/ harness)
 { pkgs ? import <nixpkgs> {} }:
 
 let
@@ -207,10 +208,6 @@ pkgs.mkShell {
     pkgs.ninja
     pkgs.pkg-config
 
-    # Native compiler for host-side unit tests
-    pkgs.clang
-    pkgs.lld
-
     # Cross toolchain
     xpack-riscv
 
@@ -234,6 +231,7 @@ pkgs.mkShell {
     echo "  renode $(renode --version 2>/dev/null | head -1 | awk '{print $NF}')"
     echo
     echo "Build firmware:   meson setup build-fw --cross-file cross/ch32v003.ini && meson compile -C build-fw"
-    echo "Build/run tests:  meson setup build-tests && meson test -C build-tests"
+    echo "Self-test:        meson test -C build-fw"
+    echo "Renode suite:     pytest tests/renode/ -v"
   '';
 }
