@@ -194,16 +194,23 @@ let
         mkdir -p $out/libexec $out/bin
         mv renode_*-dotnet_portable $out/libexec/renode
 
-        # Wrap (not symlink) so DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 is
-        # always set. Renode's portable-dotnet build dlopens libicuuc.so by
-        # version probe, but .NET 8's probe list predates nixpkgs' libicuuc.so.76
-        # and the runtime FailFasts at startup ("Couldn't find a valid ICU
-        # package"). Renode never relies on culture-aware formatting in .resc,
-        # so invariant mode is safe and avoids pinning a specific icu.
+        # Wrap (not symlink) so the .NET runtime sees the env it needs:
+        #   * DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 — .NET 8 dlopens
+        #     libicuuc.so by version probe and FailFasts when nixpkgs ships
+        #     libicuuc.so.76 (newer than anything its probe knows). Renode
+        #     never uses culture-aware formatting in .resc, so invariant mode
+        #     is safe and avoids pinning a specific icu version.
+        #   * LD_LIBRARY_PATH includes openssl — libSystem.Security.Cryp-
+        #     tography.Native.OpenSsl.so dlopens libssl.so.<N> dynamically
+        #     (it's not a DT_NEEDED), so autoPatchelfHook never adds it to
+        #     rpath and the runtime aborts with "No usable version of libssl
+        #     was found".
         makeWrapper $out/libexec/renode/renode      $out/bin/renode \
-          --set DOTNET_SYSTEM_GLOBALIZATION_INVARIANT 1
+          --set    DOTNET_SYSTEM_GLOBALIZATION_INVARIANT 1 \
+          --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [ pkgs.openssl ]}
         makeWrapper $out/libexec/renode/renode-test $out/bin/renode-test \
-          --set DOTNET_SYSTEM_GLOBALIZATION_INVARIANT 1
+          --set    DOTNET_SYSTEM_GLOBALIZATION_INVARIANT 1 \
+          --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [ pkgs.openssl ]}
 
         runHook postInstall
       '';
