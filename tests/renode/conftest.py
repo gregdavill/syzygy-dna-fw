@@ -86,9 +86,8 @@ def mret_addresses(firmware_elf: Path) -> list[int]:
     preserve. Deriving these from disassembly means changes to ISR code
     can't silently desync the hook list.
     """
-    objdump = os.environ.get("OBJDUMP", "riscv-none-elf-objdump")
     result = subprocess.run(
-        [objdump, "-d", str(firmware_elf)],
+        ["riscv-none-elf-objdump", "-d", str(firmware_elf)],
         capture_output=True, text=True, check=True,
     )
     addrs = [
