@@ -1,0 +1,48 @@
+:name: ch32v003-smoke
+
+# Minimal smoke test: load syzygy-dna.elf, step a few instructions, dump the
+# PC. This validates that Renode accepts the platform description and the
+# CPU can execute from flash. No peripheral models yet — accesses to
+# unmapped MMIO will log warnings, which is what we want to see.
+
+using sysbus
+$elf?=@build-fw/src/syzygy-dna.elf
+
+mach create "ch32v003"
+machine LoadPlatformDescription @tests/renode/platforms/ch32v003.repl
+
+sysbus LoadELF $elf
+
+# ch32fun's vector table is at flash[0], with the reset entry pointed to by
+# the first word. Renode's LoadELF sets PC from the ELF entry point
+# (InterruptVector) automatically, so no explicit `cpu PC` is needed.
+
+# 48 MHz core, ~1 IPC for simple sequences. The MIPS rating sets how much
+# wall-clock-equivalent work Renode does per RunFor budget; bumping it up
+# is the difference between "trapped in a 1 ms calibration delay" and
+# "reached main()".
+cpu PerformanceInMips 50
+logLevel 0
+logLevel 0 sysbus
+
+echo ""
+echo "=== Loaded ==="
+sysbus FindSymbolAt `cpu PC`
+echo ""
+
+emulation RunFor "1.0"
+
+echo ""
+echo "=== After 1.0s emulated ==="
+cpu PC
+sysbus FindSymbolAt `cpu PC`
+
+# Sanity check: firmware should have configured I2C1 by now.
+# OADDR1 = address_7bit << 1 (so 0x35 -> 0x6A). CTLR1 should have PE | ACK.
+echo ""
+echo "I2C1.CTLR1 = "
+sysbus ReadDoubleWord 0x40005400
+echo "I2C1.OADDR1 = (expect 0x6A for I2C address 0x35)"
+sysbus ReadDoubleWord 0x40005408
+
+quit

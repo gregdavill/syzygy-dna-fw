@@ -1,0 +1,116 @@
+// CH32V003F4U6 platform for Renode.
+//
+// Memory map per the ch32v003 reference manual (matches ldscripts/ch32v003.ld):
+//   Flash   : 0x00000000  16 KiB   (also aliased at 0x08000000 internally)
+//   SRAM    : 0x20000000   2 KiB
+//
+// Peripherals: only the regions the syzygy-dna firmware actually touches.
+// Plain RW stubs use Memory.ArrayMemory (no page-size constraint). RCC and
+// ADC1 have active behavior (auto-RDY / auto-EOC) and inline a small
+// IronPython script — Renode's PythonPeripheral filename: resolver is
+// hard-wired to its install dir, so we keep the scripts here rather than
+// in a sibling .py file.
+//
+// I2C1 is currently a memory stub — the next step replaces it with a real
+// controller model that exposes start/stop/byte-transfer hooks to pytest.
+
+cpu: CPU.RiscV32 @ sysbus
+    // Renode doesn't have a literal rv32ec — rv32imc is the smallest
+    // superset it accepts. Zicsr is required because ch32fun's startup
+    // writes mtvec; Zifencei rounds out the standard baseline.
+    cpuType: "rv32imc_zicsr_zifencei"
+    privilegedArchitecture: PrivilegedArchitecture.Priv1_10
+
+flash: Memory.MappedMemory @ sysbus 0x00000000
+    size: 0x4000
+
+sram: Memory.MappedMemory @ sysbus 0x20000000
+    // Real chip has 2 KiB; rounded up to Renode's 4 KiB minimum page size.
+    // Firmware only touches the low 0x800 bytes; the rest is invisible.
+    size: 0x1000
+
+// --- Clock / system ---------------------------------------------------------
+// RCC stub: mirrors the EN bits (HSION/HSEON/PLLON) into their RDY
+// counterparts so ch32fun's clock spin-loops complete immediately.
+// Everything else is plain read-back storage.
+
+rcc: Python.PythonPeripheral @ sysbus 0x40021000
+    size: 0x400
+    initable: true
+    script: '''
+if request.IsInit:
+    regs = {}
+elif request.IsRead:
+    request.Value = regs.get(request.Offset, 0)
+elif request.IsWrite:
+    val = request.Value
+    if request.Offset == 0x00:       # CTLR: HSION/HSEON/PLLON -> *RDY
+        if val & (1 << 0):  val |= (1 << 1)
+        if val & (1 << 16): val |= (1 << 17)
+        if val & (1 << 24): val |= (1 << 25)
+    elif request.Offset == 0x04:     # CFGR0: SW -> SWS (clock-switch status)
+        val = (val & ~(0b11 << 2)) | ((val & 0b11) << 2)
+    regs[request.Offset] = val
+'''
+
+flashIf: Memory.ArrayMemory @ sysbus 0x40022000
+    size: 0x400
+
+// --- GPIO + alt-function mux ------------------------------------------------
+
+afio:  Memory.ArrayMemory @ sysbus 0x40010000
+    size: 0x400
+exti:  Memory.ArrayMemory @ sysbus 0x40010400
+    size: 0x400
+gpioA: Memory.ArrayMemory @ sysbus 0x40010800
+    size: 0x400
+gpioC: Memory.ArrayMemory @ sysbus 0x40011000
+    size: 0x400
+gpioD: Memory.ArrayMemory @ sysbus 0x40011400
+    size: 0x400
+
+// --- ADC --------------------------------------------------------------------
+// ADC1 stub: RSTCAL/CAL bits in CTLR2 are self-clearing (firmware spins on
+// them). SWSTART triggers EOC in STATR. RDATAR returns a fixed raw count
+// — 662 maps to ~2135 mV -> I2C address 0x35 (index 5 in ga_adc.cpp's
+// nominal table). Tests can rewrite this via the Renode monitor before
+// the firmware reaches resolve_geographical_address.
+
+adc1: Python.PythonPeripheral @ sysbus 0x40012400
+    size: 0x400
+    initable: true
+    script: '''
+if request.IsInit:
+    regs = {}
+    raw_count = 662  # ~2135 mV -> I2C 0x35
+elif request.IsRead:
+    if request.Offset == 0x4C:           # RDATAR
+        request.Value = raw_count & 0x3FF
+    else:
+        request.Value = regs.get(request.Offset, 0)
+elif request.IsWrite:
+    val = request.Value
+    if request.Offset == 0x08:           # CTLR2
+        val &= ~(1 << 2)                 # CAL    self-clears
+        val &= ~(1 << 3)                 # RSTCAL self-clears
+        if val & (1 << 22):              # SWSTART -> EOC
+            val &= ~(1 << 22)
+            regs[0x00] = regs.get(0x00, 0) | (1 << 1)  # STATR.EOC
+    regs[request.Offset] = val
+'''
+
+// --- I2C (placeholder; real model coming next) ------------------------------
+
+i2c1: Memory.ArrayMemory @ sysbus 0x40005400
+    size: 0x400
+
+// --- Interrupt controller (PFIC / WCH-extended CLIC space) ------------------
+// 0xE000E000-0xE000EFFF is the standard CLIC/NVIC area; WCH puts extra
+// config regs at 0xE000F000. Until a real PFIC model exists, both are
+// memory stubs — firmware can write NVIC enable bits, they just have no
+// effect on interrupt delivery yet.
+
+pfic:    Memory.ArrayMemory @ sysbus 0xE000E000
+    size: 0x1000
+pficCfg: Memory.ArrayMemory @ sysbus 0xE000F000
+    size: 0x1000
