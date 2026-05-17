@@ -99,10 +99,119 @@ elif request.IsWrite:
     regs[request.Offset] = val
 '''
 
-// --- I2C (placeholder; real model coming next) ------------------------------
+// --- I2C1 -------------------------------------------------------------------
+// Models the CH32V003 I2C1 from the target's perspective.
+//
+// The firmware-visible registers live at the real offsets (CTLR1 etc.).
+// Controller-side test injection happens through "magic" offsets in the
+// upper half of the peripheral window (0x100..0x114) that real silicon
+// doesn't use — write them from the test harness to drive START/RX/STOP
+// and read 0x108 to pull TX bytes the firmware has staged.
+//
+// IRQ output is a software flag at the moment; the PFIC + HSP shim that
+// dispatches it to the CPU lands in the next change. Tests currently
+// invoke I2C1_EV_IRQHandler manually after each magic-register poke.
 
-i2c1: Memory.ArrayMemory @ sysbus 0x40005400
+i2c1: Python.PythonPeripheral @ sysbus 0x40005400
     size: 0x400
+    initable: true
+    script: '''
+# Real I2C1 register offsets (CH32V003 RM)
+CTLR1, CTLR2, OADDR1, OADDR2 = 0x00, 0x04, 0x08, 0x0C
+DATAR, STAR1, STAR2, CKCFGR  = 0x10, 0x14, 0x18, 0x1C
+
+# Magic offsets for test-harness injection (no real-silicon meaning)
+INJ_START, INJ_RX, INJ_TX     = 0x100, 0x104, 0x108
+INJ_STOP, INJ_NACK            = 0x10C, 0x110
+IRQ_STATE                     = 0x114   # read: bit0=EV, bit1=ER
+
+# STAR1 / STAR2 flag bits
+SB, ADDR, BTF, STOPF = 1<<0, 1<<1, 1<<2, 1<<4
+RXNE, TXE            = 1<<6, 1<<7
+BERR, ARLO, AF       = 1<<8, 1<<9, 1<<10
+MSL, BUSY, TRA       = 1<<0, 1<<1, 1<<2
+
+# CTLR1 / CTLR2 bits
+PE, ACK, SWRST       = 1<<0, 1<<10, 1<<15
+ITERREN, ITEVTEN, ITBUFEN = 1<<8, 1<<9, 1<<10
+
+if request.IsInit:
+    regs = {CTLR1: 0, CTLR2: 0, OADDR1: 0, OADDR2: 0,
+            DATAR: 0, STAR1: 0, STAR2: 0, CKCFGR: 0}
+    ev_irq = False
+    er_irq = False
+
+# ---------------- Firmware reads ----------------
+elif request.IsRead and request.Offset < 0x100:
+    off = request.Offset
+    val = regs.get(off, 0)
+    if off == STAR2:
+        # ARM-style STAR1-then-STAR2 read sequence clears ADDR.
+        regs[STAR1] = regs[STAR1] & ~ADDR
+    elif off == DATAR:
+        # Reading DATAR clears RXNE on the receive side.
+        regs[STAR1] = regs[STAR1] & ~RXNE
+    request.Value = val
+
+# ---------------- Firmware writes ----------------
+elif request.IsWrite and request.Offset < 0x100:
+    off = request.Offset
+    val = request.Value
+    if off == CTLR1:
+        if val & SWRST:
+            regs[STAR1] = 0
+            regs[STAR2] = 0
+            regs[DATAR] = 0
+        # Firmware clears STOPF via "read STAR1, write CTLR1".
+        regs[STAR1] = regs[STAR1] & ~STOPF
+        regs[CTLR1] = val
+    elif off == DATAR:
+        # Firmware staging a TX byte. Clears TXE; controller picks it up
+        # via a read of INJ_TX.
+        regs[DATAR] = val & 0xFF
+        regs[STAR1] = regs[STAR1] & ~TXE
+    elif off == STAR1:
+        # Only AF/BERR/ARLO can be cleared by firmware (W0C semantics:
+        # writing 0 clears, writing 1 leaves alone).
+        clearable = AF | BERR | ARLO
+        regs[STAR1] = (regs[STAR1] & ~clearable) | (regs[STAR1] & val & clearable)
+    else:
+        regs[off] = val
+    # Recompute IRQ outputs after every register touch.
+    ev_irq = bool(regs[CTLR2] & ITEVTEN and (regs[STAR1] & (ADDR | STOPF | BTF) or
+                  (regs[CTLR2] & ITBUFEN and regs[STAR1] & (RXNE | TXE))))
+    er_irq = bool(regs[CTLR2] & ITERREN and regs[STAR1] & (BERR | ARLO | AF))
+
+# ---------------- Test-harness injection ----------------
+elif request.IsWrite and request.Offset == INJ_START:
+    # value bit 0 = R/W direction (1 = controller is reading)
+    is_read = bool(request.Value & 1)
+    regs[STAR1] = (regs[STAR1] & ~STOPF) | ADDR
+    regs[STAR2] = BUSY | (TRA if is_read else 0)
+elif request.IsWrite and request.Offset == INJ_RX:
+    # Controller-side byte arriving at target. Latches into DATAR + RXNE.
+    regs[DATAR] = request.Value & 0xFF
+    regs[STAR1] = regs[STAR1] | RXNE
+elif request.IsRead and request.Offset == INJ_TX:
+    # Controller pulling a byte from the target. Whatever firmware last
+    # wrote to DATAR is returned; mark TXE so the ISR is invited to
+    # stage the next byte.
+    request.Value = regs[DATAR] & 0xFF
+    regs[STAR1] = regs[STAR1] | TXE
+elif request.IsWrite and request.Offset == INJ_STOP:
+    regs[STAR1] = regs[STAR1] | STOPF
+    regs[STAR2] = 0
+elif request.IsWrite and request.Offset == INJ_NACK:
+    regs[STAR1] = regs[STAR1] | AF
+elif request.IsRead and request.Offset == IRQ_STATE:
+    request.Value = (1 if ev_irq else 0) | (2 if er_irq else 0)
+
+# Refresh IRQ flags after injection too.
+if request.IsWrite and INJ_START <= request.Offset <= INJ_NACK:
+    ev_irq = bool(regs[CTLR2] & ITEVTEN and (regs[STAR1] & (ADDR | STOPF | BTF) or
+                  (regs[CTLR2] & ITBUFEN and regs[STAR1] & (RXNE | TXE))))
+    er_irq = bool(regs[CTLR2] & ITERREN and regs[STAR1] & (BERR | ARLO | AF))
+'''
 
 // --- Interrupt controller (PFIC / WCH-extended CLIC space) ------------------
 // 0xE000E000-0xE000EFFF is the standard CLIC/NVIC area; WCH puts extra

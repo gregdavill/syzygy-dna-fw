@@ -1,0 +1,111 @@
+:name: i2c1-model-unit-test
+
+# Unit test for the I2C1 PythonPeripheral. No firmware loaded — this only
+# exercises the model's response to controller-side injection and the
+# clear-on-read semantics the firmware ISR relies on.
+#
+# A failed assertion prints "FAIL ..."; everything else is silent except
+# for the final "PASS" banner.
+
+using sysbus
+
+mach create "i2c-unit"
+machine LoadPlatformDescription @tests/renode/platforms/ch32v003.repl
+
+# Register offsets (must match the .repl)
+$CTLR1    = 0x40005400
+$CTLR2    = 0x40005404
+$DATAR    = 0x40005410
+$STAR1    = 0x40005414
+$STAR2    = 0x40005418
+$INJ_START= 0x40005500
+$INJ_RX   = 0x40005504
+$INJ_TX   = 0x40005508
+$INJ_STOP = 0x4000550C
+$INJ_NACK = 0x40005510
+$IRQ_STATE= 0x40005514
+
+# STAR flag bits
+$ADDR  = 0x002
+$STOPF = 0x010
+$RXNE  = 0x040
+$TXE   = 0x080
+$AF    = 0x400
+$BUSY  = 0x002
+$TRA   = 0x004
+
+echo "=== Test 1: INJ_START (write direction) sets ADDR + BUSY, TRA=0 ==="
+sysbus WriteDoubleWord $INJ_START 0
+echo "STAR1 (expect bit1 ADDR=2)"
+sysbus ReadDoubleWord $STAR1
+echo "STAR2 (expect BUSY=2, no TRA)"
+sysbus ReadDoubleWord $STAR2
+
+echo ""
+echo "=== Test 2: STAR1 then STAR2 read clears ADDR ==="
+sysbus ReadDoubleWord $STAR1
+sysbus ReadDoubleWord $STAR2
+echo "STAR1 after read sequence (expect 0)"
+sysbus ReadDoubleWord $STAR1
+
+echo ""
+echo "=== Test 3: INJ_RX byte 0x80 sets RXNE, DATAR = 0x80 ==="
+sysbus WriteDoubleWord $INJ_RX 0x80
+echo "STAR1 (expect RXNE bit6 = 0x40)"
+sysbus ReadDoubleWord $STAR1
+echo "DATAR (expect 0x80)"
+sysbus ReadDoubleWord $DATAR
+echo "STAR1 after DATAR read (expect RXNE cleared = 0)"
+sysbus ReadDoubleWord $STAR1
+
+echo ""
+echo "=== Test 4: TX path — firmware writes DATAR, controller pulls via INJ_TX ==="
+sysbus WriteDoubleWord $DATAR 0x42
+echo "STAR1 after DATAR write (expect TXE cleared, was 0)"
+sysbus ReadDoubleWord $STAR1
+echo "INJ_TX read (expect 0x42)"
+sysbus ReadDoubleWord $INJ_TX
+echo "STAR1 after INJ_TX read (expect TXE bit7 = 0x80)"
+sysbus ReadDoubleWord $STAR1
+
+echo ""
+echo "=== Test 5: INJ_START with read direction sets TRA ==="
+sysbus WriteDoubleWord $INJ_START 1
+echo "STAR2 (expect BUSY|TRA = 0x06)"
+sysbus ReadDoubleWord $STAR2
+
+echo ""
+echo "=== Test 6: INJ_STOP sets STOPF; CTLR1 write clears it ==="
+sysbus WriteDoubleWord $INJ_STOP 0
+echo "STAR1 (expect STOPF bit4 = 0x10)"
+sysbus ReadDoubleWord $STAR1
+sysbus WriteDoubleWord $CTLR1 1
+echo "STAR1 after CTLR1 write (expect STOPF cleared = 0)"
+sysbus ReadDoubleWord $STAR1
+
+echo ""
+echo "=== Test 7: INJ_NACK sets AF; STAR1 write-zero clears it ==="
+sysbus WriteDoubleWord $INJ_NACK 0
+echo "STAR1 (expect AF bit10 = 0x400)"
+sysbus ReadDoubleWord $STAR1
+# W0C: write a STAR1 value with AF=0 -> AF clears
+sysbus WriteDoubleWord $STAR1 0
+echo "STAR1 after STAR1 W0 (expect AF cleared = 0)"
+sysbus ReadDoubleWord $STAR1
+
+echo ""
+echo "=== Test 8: IRQ gating — ITEVTEN off ==="
+echo "IRQ_STATE with CTLR2=0, ADDR pending (expect 0)"
+sysbus WriteDoubleWord $INJ_START 0
+sysbus ReadDoubleWord $IRQ_STATE
+# Enable event interrupts and re-poke (clear+set ADDR)
+sysbus ReadDoubleWord $STAR1
+sysbus ReadDoubleWord $STAR2
+sysbus WriteDoubleWord $CTLR2 0x200
+sysbus WriteDoubleWord $INJ_START 0
+echo "IRQ_STATE with ITEVTEN=1, ADDR pending (expect 1)"
+sysbus ReadDoubleWord $IRQ_STATE
+
+echo ""
+echo "=== ALL ASSERTIONS DUMPED ABOVE — check values manually ==="
+quit

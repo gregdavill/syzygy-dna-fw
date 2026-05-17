@@ -40,9 +40,9 @@ sysbus FindSymbolAt `cpu PC`
 # Sanity check: firmware should have configured I2C1 by now.
 # OADDR1 = address_7bit << 1 (so 0x35 -> 0x6A). CTLR1 should have PE | ACK.
 echo ""
-echo "I2C1.CTLR1 = "
+echo "I2C1.CTLR1 (expect 0x401 = PE | ACK)"
 sysbus ReadDoubleWord 0x40005400
-echo "I2C1.OADDR1 = (expect 0x6A for I2C address 0x35)"
+echo "I2C1.OADDR1 (expect 0x6A for I2C address 0x35)"
 sysbus ReadDoubleWord 0x40005408
 
 quit
