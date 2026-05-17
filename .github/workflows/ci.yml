@@ -1,0 +1,60 @@
+# Build the CH32V003 firmware (cross-compile + DNA blob patch), run the
+# dna_patch self-test, and run the Renode integration suite.
+#
+# All toolchain provisioning goes through shell.nix so CI and local dev
+# use the same xpack-riscv-none-elf-gcc and renode builds.
+#
+# First run takes ~5 min downloading the xpack toolchain (~150 MB) and
+# renode portable-dotnet build (~75 MB). No nix-store caching is wired
+# up — wire one of {cachix, nix-community/cache-nix-action, a self-hosted
+# binary cache} when CI cost matters.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: build firmware + renode tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v22
+
+      - name: Cross-build firmware (compile + dna_patch.py post-link)
+        run: |
+          nix-shell --run 'meson setup build-fw --cross-file cross/ch32v003.ini'
+          nix-shell --run 'meson compile -C build-fw'
+
+      - name: dna_patch self-test
+        run: nix-shell --run 'meson test -C build-fw --print-errorlogs'
+
+      - name: Renode integration tests
+        run: nix-shell --run 'pytest tests/renode/ -v'
+
+      - name: Upload firmware artifacts
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: firmware
+          path: |
+            build-fw/src/syzygy-dna.elf
+            build-fw/src/syzygy-dna.bin
+            build-fw/src/syzygy-dna.hex
+          retention-days: 14
+          if-no-files-found: error
