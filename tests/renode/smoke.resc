@@ -13,6 +13,11 @@ machine LoadPlatformDescription @tests/renode/platforms/ch32v003.repl
 
 sysbus LoadELF $elf
 
+# Bootstrap: enable machine-external interrupt in mie. Real silicon's
+# QingKe core gates only via PFIC enables, so ch32fun never writes mie;
+# Renode's stock RV32 CPU needs mie.MEIE set for cpu@11 to dispatch.
+cpu MIE 0x800
+
 # ch32fun's vector table is at flash[0], with the reset entry pointed to by
 # the first word. Renode's LoadELF sets PC from the ELF entry point
 # (InterruptVector) automatically, so no explicit `cpu PC` is needed.

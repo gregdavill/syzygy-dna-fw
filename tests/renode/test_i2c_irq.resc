@@ -1,0 +1,134 @@
+:name: i2c1-irq-end-to-end
+
+# End-to-end test: drive the firmware ISR via real interrupt delivery.
+#
+# Sequence:
+#   1. Boot firmware to WFI (verifies system_init + i2c_target_start ran).
+#   2. Install HSP shim (hooks at the MEI vector entry and at every mret
+#      site to snapshot/restore caller-saved GPRs).
+#   3. Inject a controller-side I2C write: address-match (W) + two
+#      sub-address bytes (0x80, 0x00). Each injection raises the PFIC
+#      IRQ, dispatches to I2C1_EV_IRQHandler, returns via mret.
+#   4. Inject a repeated-start (R) + read several bytes via INJ_TX. The
+#      firmware should stage bytes from RegisterMap::read(0x8000..).
+#   5. Inject NACK + STOP to close the transaction.
+#
+# Pass criteria are printed as values after each phase.
+
+using sysbus
+$elf?=@build-fw/src/syzygy-dna.elf
+
+mach create "ch32v003-irq"
+machine LoadPlatformDescription @tests/renode/platforms/ch32v003.repl
+sysbus LoadELF $elf
+cpu MIE 0x800
+
+cpu PerformanceInMips 50
+logLevel 3
+logLevel 0 sysbus
+
+# --- HSP shim --------------------------------------------------------------
+# When MEI dispatch lands at the vector-11 table slot (PC 0x2C), this hook
+# claims the highest-priority pending vector from PFIC, looks up the real
+# handler address in the firmware vector table (.word at flash[N*4]), and
+# redirects PC. The 14 caller-saved GPRs the interrupt-attributed handler
+# expects HSP to preserve are snapshotted to a Python list.
+#
+# Caller-saved set: ra, t0, t1, t2, a0..a7, t3, t4, t5, t6.
+
+cpu AddHook 0x2C """
+if 'hsp_stack' not in globals():
+    hsp_stack = []
+machine = self.GetMachine()
+sys = machine.SystemBus
+pfic = machine['sysbus.pfic']
+claim = pfic.ReadDoubleWord(0xFD0)
+if claim == 0xFFFFFFFF:
+    pass
+else:
+    handler_addr = sys.ReadDoubleWord(claim * 4)
+    snap = {}
+    for r in (1, 5, 6, 7, 10, 11, 12, 13, 14, 15, 16, 17, 28, 29, 30, 31):
+        snap[r] = self.GetRegisterUnsafe(r).RawValue
+    hsp_stack.append(snap)
+    self.PC = handler_addr
+"""
+
+# Pop hooks for each mret site found in this firmware build. Renode hook
+# scripts run BEFORE the hooked instruction, so the registers get
+# restored to their pre-IRQ values right before mret reloads PC and
+# mstatus via Renode's standard handling.
+$pop_script = """
+if 'hsp_stack' in globals() and hsp_stack:
+    snap = hsp_stack.pop()
+    for r, v in snap.items():
+        self.SetRegisterUnsafe(r, v)
+"""
+cpu AddHook 0x414 $pop_script
+cpu AddHook 0x516 $pop_script
+cpu AddHook 0x58A $pop_script
+
+# --- Boot to WFI -----------------------------------------------------------
+emulation RunFor "1.0"
+echo "=== Booted; firmware should be in WFI ==="
+echo "PC ="
+cpu PC
+echo "I2C1.OADDR1 (expect 0x6A) ="
+sysbus ReadDoubleWord 0x40005408
+
+# --- Phase 1: write-mode address match ------------------------------------
+echo ""
+echo "=== Phase 1: INJ_START write ==="
+sysbus WriteDoubleWord 0x40005500 0
+emulation RunFor "0.01"
+echo "PC after START+ISR (expect WFI ~0x14e/0x152) ="
+cpu PC
+echo "g_state.phase @ 0x20000008 (expect 1 = WaitSubAddrHi) ="
+sysbus ReadByte 0x20000008
+
+# --- Phase 2: sub-address high byte 0x80 ----------------------------------
+echo ""
+echo "=== Phase 2: INJ_RX 0x80 ==="
+sysbus WriteDoubleWord 0x40005504 0x80
+emulation RunFor "0.01"
+echo "g_state.phase (expect 2 = WaitSubAddrLo) ="
+sysbus ReadByte 0x20000008
+
+# --- Phase 3: sub-address low byte 0x00 -----------------------------------
+echo ""
+echo "=== Phase 3: INJ_RX 0x00 ==="
+sysbus WriteDoubleWord 0x40005504 0x00
+emulation RunFor "0.01"
+echo "g_state.phase (expect 3 = DataStream) ="
+sysbus ReadByte 0x20000008
+echo "g_state.subaddr @ 0x2000000A (expect 0x8000) ="
+sysbus ReadWord 0x2000000A
+
+# --- Phase 4: repeated start, read direction ------------------------------
+echo ""
+echo "=== Phase 4: INJ_START read; pull first byte via INJ_TX ==="
+sysbus WriteDoubleWord 0x40005500 1
+emulation RunFor "0.01"
+echo "First TX byte (kPodBlob[0]) ="
+sysbus ReadDoubleWord 0x40005508
+emulation RunFor "0.01"
+echo "Second TX byte (kPodBlob[1]) ="
+sysbus ReadDoubleWord 0x40005508
+emulation RunFor "0.01"
+echo "Third TX byte (kPodBlob[2]) ="
+sysbus ReadDoubleWord 0x40005508
+emulation RunFor "0.01"
+echo "Fourth TX byte (kPodBlob[3]) ="
+sysbus ReadDoubleWord 0x40005508
+
+# --- Phase 5: NACK + STOP -------------------------------------------------
+echo ""
+echo "=== Phase 5: NACK + STOP ==="
+sysbus WriteDoubleWord 0x40005510 0
+emulation RunFor "0.01"
+sysbus WriteDoubleWord 0x4000550C 0
+emulation RunFor "0.01"
+echo "g_state.phase (expect 0 = Idle) ="
+sysbus ReadByte 0x20000008
+
+quit
