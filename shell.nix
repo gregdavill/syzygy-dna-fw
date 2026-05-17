@@ -146,6 +146,7 @@ let
 
     nativeBuildInputs = pkgs.lib.optionals (renodeAsset.kind == "tarball") [
       pkgs.autoPatchelfHook
+      pkgs.makeWrapper
     ];
 
     # The portable-dotnet Linux build needs these in rpath. autoPatchelfHook
@@ -193,8 +194,16 @@ let
         mkdir -p $out/libexec $out/bin
         mv renode_*-dotnet_portable $out/libexec/renode
 
-        ln -s $out/libexec/renode/renode      $out/bin/renode
-        ln -s $out/libexec/renode/renode-test $out/bin/renode-test
+        # Wrap (not symlink) so DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 is
+        # always set. Renode's portable-dotnet build dlopens libicuuc.so by
+        # version probe, but .NET 8's probe list predates nixpkgs' libicuuc.so.76
+        # and the runtime FailFasts at startup ("Couldn't find a valid ICU
+        # package"). Renode never relies on culture-aware formatting in .resc,
+        # so invariant mode is safe and avoids pinning a specific icu.
+        makeWrapper $out/libexec/renode/renode      $out/bin/renode \
+          --set DOTNET_SYSTEM_GLOBALIZATION_INVARIANT 1
+        makeWrapper $out/libexec/renode/renode-test $out/bin/renode-test \
+          --set DOTNET_SYSTEM_GLOBALIZATION_INVARIANT 1
 
         runHook postInstall
       '';
