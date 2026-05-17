@@ -57,26 +57,27 @@ let
     dontConfigure = true;
     dontBuild = true;
     dontStrip = true;       # don't strip — they're already signed/built right
-    dontPatchELF = true;    # macOS: no-op. Linux: patched in fixupPhase below.
+
+    # On Linux, autoPatchelfHook sets the interpreter and resolves DT_NEEDED
+    # entries against buildInputs (and preserves $ORIGIN-relative entries that
+    # point into the toolchain's bundled lib/). On macOS the prebuilt tarball
+    # uses @loader_path-relative dylibs and needs no patching.
+    nativeBuildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [
+      pkgs.autoPatchelfHook
+    ];
+
+    buildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [
+      pkgs.stdenv.cc.cc.lib   # libstdc++.so.6, libgcc_s.so.1
+      pkgs.zlib
+      pkgs.libiconv           # libiconv.so.2 — binutils/gcc encoding conversion
+      pkgs.ncurses            # libtinfo — gdb TUI
+      pkgs.expat              # libexpat — gdb XML target descriptions
+      pkgs.python3            # libpython3 — gdb Python scripting
+    ];
 
     installPhase = ''
       mkdir -p $out
       cp -r * $out/
-    '';
-
-    # On Linux, patch the dynamic linker so the binaries can find ld.so.
-    # On macOS, this is a no-op.
-    postFixup = pkgs.lib.optionalString pkgs.stdenv.isLinux ''
-      ${pkgs.patchelf}/bin/patchelf \
-        --set-interpreter $(cat ${pkgs.stdenv.cc}/nix-support/dynamic-linker) \
-        $out/bin/* 2>/dev/null || true
-      for f in $out/bin/* $out/libexec/gcc/*/*/c*1 $out/libexec/gcc/*/*/lto*; do
-        if [ -f "$f" ] && file "$f" | grep -q ELF; then
-          ${pkgs.patchelf}/bin/patchelf \
-            --set-rpath ${pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib pkgs.zlib ]} \
-            "$f" 2>/dev/null || true
-        fi
-      done
     '';
 
     meta = {
