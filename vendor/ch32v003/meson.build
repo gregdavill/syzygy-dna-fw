@@ -13,8 +13,9 @@
 ch32fun_dir = meson.current_source_dir() / 'ch32fun' / 'ch32fun'
 
 if not import('fs').exists(ch32fun_dir / 'ch32fun.c')
-  error('ch32fun not found. Run: git submodule add https://github.com/cnlohr/ch32v003fun vendor/ch32v003/ch32fun')
+  error('ch32fun not found. Run: git submodule update --init')
 endif
+ch32fun_inc = include_directories('.', 'ch32fun/ch32fun', is_system : true)
 
 # Configuration lives in funconfig.h (next to this file) — ch32fun.h includes
 # it via the include path. Keep -D's out of the build command so the config is
@@ -22,7 +23,7 @@ endif
 ch32fun_lib = static_library(
   'ch32fun',
   ch32fun_dir / 'ch32fun.c',
-  include_directories : include_directories('.', 'ch32fun/ch32fun'),
+  include_directories : ch32fun_inc,
   c_args : [
     '-Wno-unused-parameter',
     '-Wno-unused-variable',
@@ -34,5 +35,5 @@ ch32fun_lib = static_library(
 
 ch32fun_dep = declare_dependency(
   link_with : ch32fun_lib,
-  include_directories : include_directories('.', 'ch32fun/ch32fun'),
+  include_directories : ch32fun_inc,
 )
