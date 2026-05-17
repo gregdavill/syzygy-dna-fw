@@ -157,6 +157,13 @@ let
       pkgs.libuuid
     ];
 
+    # libcoreclrtraceptprovider.so links liblttng-ust.so.0 for CoreCLR's LTTng
+    # event tracing — a runtime feature Renode doesn't use. Skip it so
+    # autoPatchelfHook doesn't fail when nixpkgs drops the .so.0 SONAME.
+    autoPatchelfIgnoreMissingDeps = pkgs.lib.optionals (renodeAsset.kind == "tarball") [
+      "liblttng-ust.so.0"
+    ];
+
     installPhase =
       if renodeAsset.kind == "dmg" then ''
         runHook preInstall
