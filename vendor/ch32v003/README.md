@@ -3,23 +3,10 @@
 This directory wraps [ch32fun](https://github.com/cnlohr/ch32v003fun) — a
 minimal MIT-licensed register/startup layer for the CH32V003.
 
-## One-time setup
-
-```sh
-git submodule add https://github.com/cnlohr/ch32v003fun vendor/ch32v003/ch32fun
-# or, if you don't want a submodule:
-git clone --depth=1 https://github.com/cnlohr/ch32v003fun vendor/ch32v003/ch32fun
-```
-
-The Meson `vendor/ch32v003/meson.build` then compiles `ch32v003fun.c` into a
-static library and exposes its include paths as `ch32fun_dep`.
-
-## Why ch32fun rather than the WCH StdPeriph SDK?
-
-- Minimal — fits comfortably in 16 KB of flash with code to spare.
-- MIT-licensed; no vendor toolchain dependency.
-- Register-level access: this firmware drives I²C and ADC directly anyway, so
-  a high-level peripheral library would just be dead weight.
+The Meson `vendor/ch32v003/meson.build` then compiles `ch32fun.c` into a
+static library and exposes its include paths as `ch32fun_dep`. (Upstream
+renamed the file from `ch32v003fun.c` to `ch32fun.c` when it grew CH32X
+support; the repo URL still uses the old name.)
 
 ## Flashing
 

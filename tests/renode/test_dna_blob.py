@@ -12,13 +12,8 @@ corresponding kPodBlob byte extracted from the linked ELF.
 
 import pytest
 
+from regs import I2C1_INJ_NACK, I2C1_INJ_RX, I2C1_INJ_START, I2C1_INJ_TX
 
-# I2C1 register / injection offsets (must match tests/renode/platforms/peripherals/i2c1.repl).
-INJ_START = 0x40005500
-INJ_RX    = 0x40005504
-INJ_TX    = 0x40005508
-INJ_STOP  = 0x4000550C
-INJ_NACK  = 0x40005510
 
 # Sub-address space dispatcher constants (must match src/register_map.cpp).
 DNA_BASE        = 0x8000
@@ -33,29 +28,29 @@ def _settle():
 def _write_subaddr(subaddr: int) -> list[str]:
     """Address-match-W + sub-address hi/lo (the firmware latches them into g_state)."""
     return [
-        f'sysbus WriteDoubleWord {INJ_START:#x} 0',
+        f'sysbus WriteDoubleWord {I2C1_INJ_START:#x} 0',
         _settle(),
-        f'sysbus WriteDoubleWord {INJ_RX:#x} {(subaddr >> 8) & 0xFF:#x}',
+        f'sysbus WriteDoubleWord {I2C1_INJ_RX:#x} {(subaddr >> 8) & 0xFF:#x}',
         _settle(),
-        f'sysbus WriteDoubleWord {INJ_RX:#x} {subaddr & 0xFF:#x}',
+        f'sysbus WriteDoubleWord {I2C1_INJ_RX:#x} {subaddr & 0xFF:#x}',
         _settle(),
     ]
 
 
 def _begin_read() -> list[str]:
-    return [f'sysbus WriteDoubleWord {INJ_START:#x} 1', _settle()]
+    return [f'sysbus WriteDoubleWord {I2C1_INJ_START:#x} 1', _settle()]
 
 
 def _read_byte(label: str) -> list[str]:
     return [
         f'echo ">> {label} = "',
-        f'sysbus ReadDoubleWord {INJ_TX:#x}',
+        f'sysbus ReadDoubleWord {I2C1_INJ_TX:#x}',
         _settle(),
     ]
 
 
 def _close() -> list[str]:
-    return [f'sysbus WriteDoubleWord {INJ_NACK:#x} 0', _settle()]
+    return [f'sysbus WriteDoubleWord {I2C1_INJ_NACK:#x} 0', _settle()]
 
 
 @pytest.mark.parametrize("nbytes", [4, 16, 40])

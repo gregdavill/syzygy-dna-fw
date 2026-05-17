@@ -20,21 +20,19 @@ project(
 # its --self-test runs as a meson test below.
 assert(meson.is_cross_build(), 'configure with --cross-file cross/ch32v003.ini')
 
+# Flags that apply identically to C and C++ — emit one symbol per
+# function/data item so --gc-sections can drop unused ones at link time.
+common_optim = ['-ffunction-sections', '-fdata-sections', '-fno-common']
+
+add_project_arguments(common_optim, language : 'c')
 add_project_arguments(
-  '-fno-exceptions',
-  '-fno-rtti',
-  '-fno-threadsafe-statics',
-  '-fno-use-cxa-atexit',
-  '-ffunction-sections',
-  '-fdata-sections',
-  '-fno-common',
+  common_optim + [
+    '-fno-exceptions',
+    '-fno-rtti',
+    '-fno-threadsafe-statics',
+    '-fno-use-cxa-atexit',
+  ],
   language : 'cpp',
-)
-add_project_arguments(
-  '-ffunction-sections',
-  '-fdata-sections',
-  '-fno-common',
-  language : 'c',
 )
 add_project_link_arguments(
   '-Wl,--gc-sections',

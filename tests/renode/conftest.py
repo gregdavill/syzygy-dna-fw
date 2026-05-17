@@ -32,9 +32,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # tools/dna_patch.py is the canonical "find the DNA slot in the ELF"
 # implementation. We reuse it here so tests and the patcher agree on
-# how the symbol is located.
+# both how the symbol is located and what name it's known by.
 sys.path.insert(0, str(REPO_ROOT / "tools"))
-from dna_patch import find_symbol_slot  # noqa: E402
+from dna_patch import DEFAULT_SYMBOL_NEEDLE, find_symbol_slot  # noqa: E402
+
+# Must match src/dna/dna_content.hpp:kPodBlobSize. The blob is the entire
+# 4 KB DNA EEPROM region the spec maps at sub-address 0x8000-0x8FFF.
+EXPECTED_POD_BLOB_SIZE = 4096
 
 
 @pytest.fixture(scope="session")
@@ -64,7 +68,12 @@ def expected_pod_blob(firmware_elf: Path) -> bytes:
     equal these bytes by construction.
     """
     raw = firmware_elf.read_bytes()
-    offset, size, _ = find_symbol_slot(ELFFile(BytesIO(raw)), "kPodBlob")
+    offset, size, _ = find_symbol_slot(ELFFile(BytesIO(raw)), DEFAULT_SYMBOL_NEEDLE)
+    assert size == EXPECTED_POD_BLOB_SIZE, (
+        f"kPodBlob symbol size in ELF is {size} bytes, expected "
+        f"{EXPECTED_POD_BLOB_SIZE} (kPodBlobSize). "
+        f"Check src/dna/dna_content.hpp."
+    )
     return raw[offset : offset + size]
 
 
@@ -137,6 +146,10 @@ logLevel 3
 logLevel 0 sysbus
 
 # --- HSP shim (claim from PFIC, redirect via vector table .word) -----------
+# 0x2C is the QingKe vector-table slot for machine-external interrupts
+# (RISC-V CLINT vector 11, 4 bytes per entry: 11 * 4 == 0x2C). Renode lands
+# the PC here on MEI dispatch; we intercept, snapshot caller-saved GPRs,
+# and redirect to the real handler address listed at that slot.
 cpu AddHook 0x2C \"\"\"
 if 'hsp_stack' not in globals():
     hsp_stack = []

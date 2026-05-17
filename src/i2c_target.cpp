@@ -9,7 +9,9 @@ extern "C" {
 namespace syzygy {
 namespace {
 
-// Phase of the current I2C transaction. Reset on every ADDR-match event.
+// Phase of the current I2C transaction. Set on every ADDR-match event:
+// write direction starts at WaitSubAddrHi, read direction goes straight
+// to DataStream (the subaddr was latched by a preceding write transaction).
 enum class Phase : std::uint8_t {
     Idle,
     WaitSubAddrHi,   // ADDR matched W, no bytes yet

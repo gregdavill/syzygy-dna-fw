@@ -6,19 +6,21 @@ nominal mV table per the SYZYGY DNA spec table 1. The firmware reads the
 ADC, averages 16 samples, converts to mV, and picks the address whose
 nominal mV is within ±GA_ADC_WINDOW_MV (default 75 mV) of the reading.
 
-These tests seed the ADC's raw count via the test-only INJ_RAW offset
-(0x40012600), boot the firmware, and assert that I2C1->OADDR1 ends up
+These tests seed the ADC's raw count via the test-only ADC1_INJ_RAW
+offset, boot the firmware, and assert that I2C1->OADDR1 ends up
 configured for the expected 7-bit address (which the I2C target uses to
 hardware-ACK the bus address).
 """
 
 import pytest
 
-# I2C1 OADDR1 is at 0x40005408 (CH32V003 RM). OADDR1[7:1] = address_7bit.
-OADDR1 = 0x40005408
-ADC1_INJ_RAW = 0x40012600   # = ADC1 base 0x40012400 + 0x200
+from regs import ADC1_INJ_RAW, I2C1_OADDR1
 
-# Mirrors kNominalMv from src/ga_adc.cpp. Index i -> I2C address 0x30 + i.
+
+# Deliberate independent copy of the spec's Table 1 nominal voltages, also
+# encoded in src/ga_adc.cpp:kNominalMv. The test exists *to* check the
+# firmware's table; importing the firmware copy would defeat the point.
+# Index i -> I2C address 0x30 + i.
 NOMINAL_MV = [
     3147, 2944, 2740, 2548, 2341, 2135, 1926, 1734,
     1535, 1341, 1137,  933,  738,  541,  342,  153,
@@ -39,7 +41,7 @@ def test_ga_address_for_each_nominal(renode_run, index):
     pre_boot = f'sysbus WriteDoubleWord {ADC1_INJ_RAW:#x} {raw}'
     body = '\n'.join([
         'echo ">> oaddr1 = "',
-        f'sysbus ReadDoubleWord {OADDR1:#x}',
+        f'sysbus ReadDoubleWord {I2C1_OADDR1:#x}',
     ])
 
     result = renode_run(body, pre_boot=pre_boot)
@@ -65,7 +67,7 @@ def test_ga_address_window_inside(renode_run, raw, expected_addr):
     pre_boot = f'sysbus WriteDoubleWord {ADC1_INJ_RAW:#x} {raw}'
     body = '\n'.join([
         'echo ">> oaddr1 = "',
-        f'sysbus ReadDoubleWord {OADDR1:#x}',
+        f'sysbus ReadDoubleWord {I2C1_OADDR1:#x}',
     ])
     result = renode_run(body, pre_boot=pre_boot)
     assert result["oaddr1"] == expected_addr << 1, (
@@ -94,7 +96,7 @@ def test_ga_address_dead_band(renode_run, raw, mv, why):
     pre_boot = f'sysbus WriteDoubleWord {ADC1_INJ_RAW:#x} {raw}'
     body = '\n'.join([
         'echo ">> oaddr1 = "',
-        f'sysbus ReadDoubleWord {OADDR1:#x}',
+        f'sysbus ReadDoubleWord {I2C1_OADDR1:#x}',
     ])
     result = renode_run(body, pre_boot=pre_boot)
     assert result["oaddr1"] == 0, (

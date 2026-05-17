@@ -1,10 +1,10 @@
 # ch32fun integration.
 #
-# Expected layout:
+# Expected layout (upstream renamed ch32v003fun -> ch32fun):
 #   vendor/ch32v003/ch32fun/                <- clone of github.com/cnlohr/ch32v003fun
-#                          /ch32fun/ch32v003fun.c
-#                          /ch32fun/ch32v003fun.h
-#                          /ch32fun/ch32v00x.h
+#                          /ch32fun/ch32fun.c
+#                          /ch32fun/ch32fun.h
+#                          /ch32fun/ch32v003hw.h
 #                          /ch32fun/...
 #
 # Add as submodule with:

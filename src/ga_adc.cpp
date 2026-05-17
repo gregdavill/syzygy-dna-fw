@@ -31,31 +31,37 @@ constexpr std::uint16_t raw_to_mv(std::uint16_t raw) {
     return static_cast<std::uint16_t>((static_cast<std::uint32_t>(raw) * 3300u) / 1023u);
 }
 
-// Single ADC1 conversion on channel 0 (PA2). Returns the raw 10-bit count.
-std::uint16_t adc_sample_pa2() {
-    // Configure ADC1: independent mode, single conversion, channel 0.
-    ADC1->CTLR2 = ADC_ADON | ADC_EXTSEL;  // software trigger, ADC enabled
+// One-time ADC1 configuration + calibration for channel 0 (PA2). The
+// CH32V003 RM recommends calibrating once after enable; the conversion
+// loop below then just triggers SWSTART per sample.
+void adc_init_pa2() {
+    // Independent mode, software trigger, single channel-0 conversion.
+    ADC1->CTLR2 = ADC_ADON | ADC_EXTSEL;
     ADC1->RSQR3 = 0;                      // first (and only) conversion: channel 0
     ADC1->RSQR1 = 0;                      // 1 conversion in regular group
     // Sampling time: longest (241 cycles for channel 0) to settle 10 kΩ source.
     ADC1->SAMPTR2 = 0b111;                // SMP0 = 111
 
-    // Calibrate (recommended after enable).
     ADC1->CTLR2 |= ADC_RSTCAL;
     while (ADC1->CTLR2 & ADC_RSTCAL) { /* wait */ }
     ADC1->CTLR2 |= ADC_CAL;
     while (ADC1->CTLR2 & ADC_CAL) { /* wait */ }
+}
 
-    // Start conversion (SWSTART).
+// Trigger one ADC1 conversion and return the raw 10-bit count. The
+// RDATAR read clears EOC on real silicon, so the next call's
+// wait-loop won't see a stale flag.
+std::uint16_t adc_sample_pa2() {
     ADC1->CTLR2 |= ADC_SWSTART;
     while (!(ADC1->STATR & ADC_EOC)) { /* wait */ }
-
     return static_cast<std::uint16_t>(ADC1->RDATAR & 0x3FFu);
 }
 
 }  // namespace
 
 std::optional<std::uint8_t> resolve_geographical_address() {
+    adc_init_pa2();
+
     // Average a handful of samples to reduce noise.
     std::uint32_t accum = 0;
     constexpr int kSamples = 16;

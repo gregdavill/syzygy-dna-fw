@@ -31,7 +31,7 @@ v1.1](https://syzygyfpga.io/wp-content/uploads/2020/05/Syzygy-DNA-Specification-
 │       └── dna_content.cpp        the placeholder array (patched post-link)
 └── tools/
     ├── dna_patch.py               YAML -> DNA blob -> patch into ELF
-    ├── dna_example.yaml           default identity baked in by meson
+    ├── dna_example.yaml           default identity injected post-link by meson
     └── flash.sh                   minichlink wrapper
 ```
 
@@ -64,14 +64,27 @@ tools/dna_patch.py build-fw/src/syzygy-dna.elf my-unit.yaml -o syzygy-dna-SN0001
 
 ## Run tests
 
+Two suites, both wired into CI:
+
 ```sh
-meson test -C build-fw
+meson test -C build-fw           # offline DNA self-test (~0.1s)
+pytest tests/renode/ -v          # Renode integration suite (~2 min, 25 tests)
 ```
 
-The single test runs `tools/dna_patch.py --self-test`, which reproduces the
+The meson test runs `tools/dna_patch.py --self-test`, which reproduces the
 spec's POD-CAMERA example and asserts the published CRC of `0x72F9` — this is
 the only place the DNA layout has a programmatic implementation, so the
 self-test pins it to the spec.
+
+The pytest suite boots the compiled firmware inside Renode against a CH32V003
+platform model (RCC / ADC1 / I2C1 / PFIC peripherals in
+[tests/renode/platforms/](tests/renode/platforms/)) and exercises two
+end-to-end paths:
+
+- `test_adc_address.py` sweeps every R_GA voltage and asserts the firmware
+  programs the matching 7-bit I2C address.
+- `test_dna_blob.py` drives a controller-side I2C read of `kPodBlob` through
+  the firmware's ISR and compares byte-for-byte against the ELF.
 
 ## Flash
 
