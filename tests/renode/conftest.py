@@ -77,14 +77,19 @@ _PRINT_RE = re.compile(r"^>>\s*(\w+)\s*=\s*(0x[0-9a-fA-F]+|\d+)\s*$", re.MULTILI
 def renode_run(repo_root: Path, firmware_elf: Path):
     """Render a .resc, run Renode against it, return parsed ``>> name = value`` lines.
 
-    The caller passes the body of the .resc — everything after the standard
-    boot prelude. Tests use `print` lines of the form ``echo ">> name = ..."``
-    followed by `sysbus ReadDoubleWord ...` to emit machine-readable values
-    this harness scrapes.
+    The caller passes the body of the .resc that runs *after* the firmware
+    has reached its WFI idle loop. Tests use `print` lines of the form
+    ``echo ">> name = ..."`` followed by `sysbus ReadDoubleWord ...` to emit
+    machine-readable values this harness scrapes.
+
+    ``pre_boot`` is an optional chunk that runs after the platform + ELF
+    load but before the boot-emulation step. Use it to seed peripheral
+    state the firmware reads during init (most notably the ADC raw count
+    via ``sysbus WriteDoubleWord 0x40012600 <raw>``).
     """
 
-    def run(body: str) -> dict[str, int]:
-        prelude = f"""\
+    def run(body: str, pre_boot: str = "") -> dict[str, int]:
+        setup = f"""\
 :name: pytest-driven
 
 using sysbus
@@ -122,12 +127,10 @@ if 'hsp_stack' in globals() and hsp_stack:
 cpu AddHook 0x414 $pop
 cpu AddHook 0x516 $pop
 cpu AddHook 0x58A $pop
-
-# --- Boot to WFI ----------------------------------------------------------
-emulation RunFor "1.0"
 """
 
-        full = prelude + body + "\nquit\n"
+        boot = '\nemulation RunFor "1.0"\n'
+        full = setup + pre_boot + boot + body + "\nquit\n"
         with tempfile.NamedTemporaryFile(
             "w", suffix=".resc", delete=False, dir=repo_root
         ) as tmp:

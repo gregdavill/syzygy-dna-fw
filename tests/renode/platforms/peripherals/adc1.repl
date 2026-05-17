@@ -1,15 +1,18 @@
 // CH32V003 ADC1 stub.
 //
 // RSTCAL/CAL bits in CTLR2 are self-clearing (firmware spins on them).
-// SWSTART triggers EOC in STATR. RDATAR returns a fixed raw count of 662,
-// which after raw_to_mv -> ~2135 mV maps to I2C address 0x35 (index 5 in
-// ga_adc.cpp's nominal table). Tests can rewrite this via the Renode
-// monitor before the firmware reaches resolve_geographical_address.
+// SWSTART triggers EOC in STATR. RDATAR returns a fixed 10-bit raw count.
+// The default 662 maps to ~2135 mV -> I2C address 0x35 (index 5 in
+// ga_adc.cpp's nominal table); tests can override it before the firmware
+// reaches resolve_geographical_address() by writing the desired count to
+// the magic offset 0x200 — outside the real silicon register set.
 
 adc1: Python.PythonPeripheral @ sysbus 0x40012400
     size: 0x400
     initable: true
     script: '''
+INJ_RAW = 0x200   # test-only: override raw_count for the next RDATAR read
+
 if request.IsInit:
     regs = {}
     raw_count = 662  # ~2135 mV -> I2C 0x35
@@ -20,11 +23,15 @@ elif request.IsRead:
         request.Value = regs.get(request.Offset, 0)
 elif request.IsWrite:
     val = request.Value
-    if request.Offset == 0x08:           # CTLR2
+    if request.Offset == INJ_RAW:
+        raw_count = val & 0x3FF
+    elif request.Offset == 0x08:         # CTLR2
         val &= ~(1 << 2)                 # CAL    self-clears
         val &= ~(1 << 3)                 # RSTCAL self-clears
         if val & (1 << 22):              # SWSTART -> EOC
             val &= ~(1 << 22)
             regs[0x00] = regs.get(0x00, 0) | (1 << 1)  # STATR.EOC
-    regs[request.Offset] = val
+        regs[request.Offset] = val
+    else:
+        regs[request.Offset] = val
 '''
