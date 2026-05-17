@@ -1,0 +1,80 @@
+// CH32V003 PFIC + WCH-extended config space.
+//
+// PFIC uses ARM NVIC register layout (ISER at +0x100 etc.) at 0xE000E000;
+// WCH adds its own config regs at 0xE000F000 (kept as a memory stub).
+//
+// This model tracks the enable/pending state firmware sets via
+// NVIC_EnableIRQ() and translates "fire IRQ N" into cpu@11 (machine
+// external) assertion. Two non-silicon magic offsets bridge the bits
+// Renode's standard MEI dispatch can't model on its own:
+//
+//   RAISE   (write 0xFE0): cross-peripheral signal. The I2C peripheral
+//                          writes its vector number here when it wants
+//                          to fire an interrupt; PFIC ORs that into
+//                          pending and reschedules.
+//   CLAIM   (read 0xFD0):  reads return the highest-priority pending
+//                          enabled vector and atomically clear it from
+//                          pending. Used by the PC=0x2C hook to figure
+//                          out which handler to dispatch to. 0xFFFFFFFF
+//                          when nothing's pending.
+//
+// mie.MEIE must be set externally (.resc does `cpu MIE 0x800`) — assigning
+// to cpu.MIE from inside a Python peripheral fails with a RegisterValue
+// type-mismatch in IronPython.
+
+pfic: Python.PythonPeripheral @ sysbus 0xE000E000
+    size: 0x1000
+    initable: true
+    script: '''
+ISER0, ICER0, ISPR0, ICPR0, IABR0 = 0x100, 0x180, 0x200, 0x280, 0x300
+CLAIM, RAISE = 0xFD0, 0xFE0
+
+if request.IsInit:
+    enable = 0
+    pending = 0
+    regs = {}
+
+elif request.IsRead:
+    off = request.Offset
+    if off == ISER0 or off == ICER0:
+        request.Value = enable
+    elif off == ISPR0 or off == ICPR0:
+        request.Value = pending
+    elif off == IABR0:
+        request.Value = 0
+    elif off == CLAIM:
+        candidate = pending & enable
+        if candidate == 0:
+            request.Value = 0xFFFFFFFF
+        else:
+            for n in range(32):
+                if candidate & (1 << n):
+                    pending = pending & ~(1 << n)
+                    if (pending & enable) == 0:
+                        self.GetMachine()["sysbus.cpu"].OnGPIO(11, False)
+                    request.Value = n
+                    break
+    else:
+        request.Value = regs.get(off, 0)
+
+elif request.IsWrite:
+    off = request.Offset
+    val = request.Value
+    if off == ISER0:
+        enable = enable | val
+    elif off == ICER0:
+        enable = enable & ~val
+    elif off == ISPR0:
+        pending = pending | val
+    elif off == ICPR0:
+        pending = pending & ~val
+    elif off == RAISE:
+        pending = pending | (1 << (val & 0x1F))
+    else:
+        regs[off] = val
+    if (pending & enable) != 0:
+        self.GetMachine()["sysbus.cpu"].OnGPIO(11, True)
+'''
+
+pficCfg: Memory.ArrayMemory @ sysbus 0xE000F000
+    size: 0x1000

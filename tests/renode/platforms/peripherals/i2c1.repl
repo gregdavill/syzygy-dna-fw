@@ -1,0 +1,118 @@
+// CH32V003 I2C1 target-side model.
+//
+// Firmware-visible registers live at the real offsets (CTLR1 etc.).
+// Controller-side test injection happens through magic offsets in the
+// upper half of the peripheral window (0x100..0x114) that real silicon
+// doesn't use — tests write them to drive START/RX/STOP and read 0x108
+// to pull TX bytes the firmware has staged.
+//
+// IRQ output writes pfic's RAISE register (vector 30 for I2C1_EV, 31 for
+// I2C1_ER), which gates on PFIC.ISER and asserts cpu@11 if appropriate.
+
+i2c1: Python.PythonPeripheral @ sysbus 0x40005400
+    size: 0x400
+    initable: true
+    script: '''
+# Real I2C1 register offsets (CH32V003 RM)
+CTLR1, CTLR2, OADDR1, OADDR2 = 0x00, 0x04, 0x08, 0x0C
+DATAR, STAR1, STAR2, CKCFGR  = 0x10, 0x14, 0x18, 0x1C
+
+# Magic offsets for test-harness injection (no real-silicon meaning)
+INJ_START, INJ_RX, INJ_TX     = 0x100, 0x104, 0x108
+INJ_STOP, INJ_NACK            = 0x10C, 0x110
+IRQ_STATE                     = 0x114   # read: bit0=EV, bit1=ER
+
+# STAR1 / STAR2 flag bits
+SB, ADDR, BTF, STOPF = 1<<0, 1<<1, 1<<2, 1<<4
+RXNE, TXE            = 1<<6, 1<<7
+BERR, ARLO, AF       = 1<<8, 1<<9, 1<<10
+MSL, BUSY, TRA       = 1<<0, 1<<1, 1<<2
+
+# CTLR1 / CTLR2 bits
+PE, ACK, SWRST       = 1<<0, 1<<10, 1<<15
+ITERREN, ITEVTEN, ITBUFEN = 1<<8, 1<<9, 1<<10
+
+# CH32V003 IRQ vector numbers
+I2C1_EV_VEC, I2C1_ER_VEC = 30, 31
+
+if request.IsInit:
+    regs = {CTLR1: 0, CTLR2: 0, OADDR1: 0, OADDR2: 0,
+            DATAR: 0, STAR1: 0, STAR2: 0, CKCFGR: 0}
+    ev_irq = False
+    er_irq = False
+
+# ---------------- Firmware reads ----------------
+elif request.IsRead and request.Offset < 0x100:
+    off = request.Offset
+    val = regs.get(off, 0)
+    if off == STAR2:
+        # ARM-style STAR1-then-STAR2 read sequence clears ADDR.
+        regs[STAR1] = regs[STAR1] & ~ADDR
+    elif off == DATAR:
+        # Reading DATAR clears RXNE on the receive side.
+        regs[STAR1] = regs[STAR1] & ~RXNE
+    request.Value = val
+
+# ---------------- Firmware writes ----------------
+elif request.IsWrite and request.Offset < 0x100:
+    off = request.Offset
+    val = request.Value
+    if off == CTLR1:
+        if val & SWRST:
+            regs[STAR1] = 0
+            regs[STAR2] = 0
+            regs[DATAR] = 0
+        # Firmware clears STOPF via "read STAR1, write CTLR1".
+        regs[STAR1] = regs[STAR1] & ~STOPF
+        regs[CTLR1] = val
+    elif off == DATAR:
+        # Firmware staging a TX byte. Clears TXE; controller picks it up
+        # via a read of INJ_TX.
+        regs[DATAR] = val & 0xFF
+        regs[STAR1] = regs[STAR1] & ~TXE
+    elif off == STAR1:
+        # Only AF/BERR/ARLO can be cleared by firmware (W0C semantics:
+        # writing 0 clears, writing 1 leaves alone).
+        clearable = AF | BERR | ARLO
+        regs[STAR1] = (regs[STAR1] & ~clearable) | (regs[STAR1] & val & clearable)
+    else:
+        regs[off] = val
+
+# ---------------- Test-harness injection ----------------
+elif request.IsWrite and request.Offset == INJ_START:
+    # value bit 0 = R/W direction (1 = controller is reading)
+    is_read = bool(request.Value & 1)
+    regs[STAR1] = (regs[STAR1] & ~STOPF) | ADDR
+    regs[STAR2] = BUSY | (TRA if is_read else 0)
+elif request.IsWrite and request.Offset == INJ_RX:
+    # Controller-side byte arriving at target. Latches into DATAR + RXNE.
+    regs[DATAR] = request.Value & 0xFF
+    regs[STAR1] = regs[STAR1] | RXNE
+elif request.IsRead and request.Offset == INJ_TX:
+    # Controller pulling a byte from the target. Whatever firmware last
+    # wrote to DATAR is returned; mark TXE so the ISR is invited to
+    # stage the next byte.
+    request.Value = regs[DATAR] & 0xFF
+    regs[STAR1] = regs[STAR1] | TXE
+elif request.IsWrite and request.Offset == INJ_STOP:
+    regs[STAR1] = regs[STAR1] | STOPF
+    regs[STAR2] = 0
+elif request.IsWrite and request.Offset == INJ_NACK:
+    regs[STAR1] = regs[STAR1] | AF
+elif request.IsRead and request.Offset == IRQ_STATE:
+    request.Value = (1 if ev_irq else 0) | (2 if er_irq else 0)
+
+# IRQ recompute runs after every access — read or write, firmware or test
+# injection. Real silicon's IRQ output is level-sensitive; we treat it as
+# such by always raising PFIC pending while the condition holds. The PFIC
+# OR-merges pending bits, and the in-flight ISR has mstatus.MIE=0 so
+# spurious re-raises during ISR execution don't cause re-entry.
+if not request.IsInit:
+    ev_irq = bool(regs[CTLR2] & ITEVTEN and (regs[STAR1] & (ADDR | STOPF | BTF) or
+                  (regs[CTLR2] & ITBUFEN and regs[STAR1] & (RXNE | TXE))))
+    er_irq = bool(regs[CTLR2] & ITERREN and regs[STAR1] & (BERR | ARLO | AF))
+    if ev_irq:
+        self.GetMachine()["sysbus.pfic"].WriteDoubleWord(0xFE0, I2C1_EV_VEC)
+    if er_irq:
+        self.GetMachine()["sysbus.pfic"].WriteDoubleWord(0xFE0, I2C1_ER_VEC)
+'''

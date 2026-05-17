@@ -4,15 +4,16 @@
 //   Flash   : 0x00000000  16 KiB   (also aliased at 0x08000000 internally)
 //   SRAM    : 0x20000000   2 KiB
 //
-// Peripherals: only the regions the syzygy-dna firmware actually touches.
-// Plain RW stubs use Memory.ArrayMemory (no page-size constraint). RCC and
-// ADC1 have active behavior (auto-RDY / auto-EOC) and inline a small
-// IronPython script — Renode's PythonPeripheral filename: resolver is
-// hard-wired to its install dir, so we keep the scripts here rather than
-// in a sibling .py file.
-//
-// I2C1 is currently a memory stub — the next step replaces it with a real
-// controller model that exposes start/stop/byte-transfer hooks to pytest.
+// Each PythonPeripheral with non-trivial behavior lives in its own .repl
+// under peripherals/ — Renode's `using "./..."` resolves relative to this
+// file. PythonPeripheral filename: would resolve only against Renode's
+// install dir, which is why we keep the scripts inline inside per-peripheral
+// .repls rather than as sibling .py files.
+
+using "./peripherals/rcc.repl"
+using "./peripherals/adc1.repl"
+using "./peripherals/i2c1.repl"
+using "./peripherals/pfic.repl"
 
 cpu: CPU.RiscV32 @ sysbus
     // Renode doesn't have a literal rv32ec — rv32imc is the smallest
@@ -29,34 +30,10 @@ sram: Memory.MappedMemory @ sysbus 0x20000000
     // Firmware only touches the low 0x800 bytes; the rest is invisible.
     size: 0x1000
 
-// --- Clock / system ---------------------------------------------------------
-// RCC stub: mirrors the EN bits (HSION/HSEON/PLLON) into their RDY
-// counterparts so ch32fun's clock spin-loops complete immediately.
-// Everything else is plain read-back storage.
-
-rcc: Python.PythonPeripheral @ sysbus 0x40021000
-    size: 0x400
-    initable: true
-    script: '''
-if request.IsInit:
-    regs = {}
-elif request.IsRead:
-    request.Value = regs.get(request.Offset, 0)
-elif request.IsWrite:
-    val = request.Value
-    if request.Offset == 0x00:       # CTLR: HSION/HSEON/PLLON -> *RDY
-        if val & (1 << 0):  val |= (1 << 1)
-        if val & (1 << 16): val |= (1 << 17)
-        if val & (1 << 24): val |= (1 << 25)
-    elif request.Offset == 0x04:     # CFGR0: SW -> SWS (clock-switch status)
-        val = (val & ~(0b11 << 2)) | ((val & 0b11) << 2)
-    regs[request.Offset] = val
-'''
+// --- Passive memory stubs for regions firmware writes but never reads back ---
 
 flashIf: Memory.ArrayMemory @ sysbus 0x40022000
     size: 0x400
-
-// --- GPIO + alt-function mux ------------------------------------------------
 
 afio:  Memory.ArrayMemory @ sysbus 0x40010000
     size: 0x400
@@ -68,238 +45,3 @@ gpioC: Memory.ArrayMemory @ sysbus 0x40011000
     size: 0x400
 gpioD: Memory.ArrayMemory @ sysbus 0x40011400
     size: 0x400
-
-// --- ADC --------------------------------------------------------------------
-// ADC1 stub: RSTCAL/CAL bits in CTLR2 are self-clearing (firmware spins on
-// them). SWSTART triggers EOC in STATR. RDATAR returns a fixed raw count
-// — 662 maps to ~2135 mV -> I2C address 0x35 (index 5 in ga_adc.cpp's
-// nominal table). Tests can rewrite this via the Renode monitor before
-// the firmware reaches resolve_geographical_address.
-
-adc1: Python.PythonPeripheral @ sysbus 0x40012400
-    size: 0x400
-    initable: true
-    script: '''
-if request.IsInit:
-    regs = {}
-    raw_count = 662  # ~2135 mV -> I2C 0x35
-elif request.IsRead:
-    if request.Offset == 0x4C:           # RDATAR
-        request.Value = raw_count & 0x3FF
-    else:
-        request.Value = regs.get(request.Offset, 0)
-elif request.IsWrite:
-    val = request.Value
-    if request.Offset == 0x08:           # CTLR2
-        val &= ~(1 << 2)                 # CAL    self-clears
-        val &= ~(1 << 3)                 # RSTCAL self-clears
-        if val & (1 << 22):              # SWSTART -> EOC
-            val &= ~(1 << 22)
-            regs[0x00] = regs.get(0x00, 0) | (1 << 1)  # STATR.EOC
-    regs[request.Offset] = val
-'''
-
-// --- I2C1 -------------------------------------------------------------------
-// Models the CH32V003 I2C1 from the target's perspective.
-//
-// The firmware-visible registers live at the real offsets (CTLR1 etc.).
-// Controller-side test injection happens through "magic" offsets in the
-// upper half of the peripheral window (0x100..0x114) that real silicon
-// doesn't use — write them from the test harness to drive START/RX/STOP
-// and read 0x108 to pull TX bytes the firmware has staged.
-//
-// IRQ output is a software flag at the moment; the PFIC + HSP shim that
-// dispatches it to the CPU lands in the next change. Tests currently
-// invoke I2C1_EV_IRQHandler manually after each magic-register poke.
-
-i2c1: Python.PythonPeripheral @ sysbus 0x40005400
-    size: 0x400
-    initable: true
-    script: '''
-# Real I2C1 register offsets (CH32V003 RM)
-CTLR1, CTLR2, OADDR1, OADDR2 = 0x00, 0x04, 0x08, 0x0C
-DATAR, STAR1, STAR2, CKCFGR  = 0x10, 0x14, 0x18, 0x1C
-
-# Magic offsets for test-harness injection (no real-silicon meaning)
-INJ_START, INJ_RX, INJ_TX     = 0x100, 0x104, 0x108
-INJ_STOP, INJ_NACK            = 0x10C, 0x110
-IRQ_STATE                     = 0x114   # read: bit0=EV, bit1=ER
-
-# STAR1 / STAR2 flag bits
-SB, ADDR, BTF, STOPF = 1<<0, 1<<1, 1<<2, 1<<4
-RXNE, TXE            = 1<<6, 1<<7
-BERR, ARLO, AF       = 1<<8, 1<<9, 1<<10
-MSL, BUSY, TRA       = 1<<0, 1<<1, 1<<2
-
-# CTLR1 / CTLR2 bits
-PE, ACK, SWRST       = 1<<0, 1<<10, 1<<15
-ITERREN, ITEVTEN, ITBUFEN = 1<<8, 1<<9, 1<<10
-
-if request.IsInit:
-    regs = {CTLR1: 0, CTLR2: 0, OADDR1: 0, OADDR2: 0,
-            DATAR: 0, STAR1: 0, STAR2: 0, CKCFGR: 0}
-    ev_irq = False
-    er_irq = False
-    # CH32V003 IRQ vector numbers
-    I2C1_EV_VEC = 30
-    I2C1_ER_VEC = 31
-
-# ---------------- Firmware reads ----------------
-elif request.IsRead and request.Offset < 0x100:
-    off = request.Offset
-    val = regs.get(off, 0)
-    if off == STAR2:
-        # ARM-style STAR1-then-STAR2 read sequence clears ADDR.
-        regs[STAR1] = regs[STAR1] & ~ADDR
-    elif off == DATAR:
-        # Reading DATAR clears RXNE on the receive side.
-        regs[STAR1] = regs[STAR1] & ~RXNE
-    request.Value = val
-
-# ---------------- Firmware writes ----------------
-elif request.IsWrite and request.Offset < 0x100:
-    off = request.Offset
-    val = request.Value
-    if off == CTLR1:
-        if val & SWRST:
-            regs[STAR1] = 0
-            regs[STAR2] = 0
-            regs[DATAR] = 0
-        # Firmware clears STOPF via "read STAR1, write CTLR1".
-        regs[STAR1] = regs[STAR1] & ~STOPF
-        regs[CTLR1] = val
-    elif off == DATAR:
-        # Firmware staging a TX byte. Clears TXE; controller picks it up
-        # via a read of INJ_TX.
-        regs[DATAR] = val & 0xFF
-        regs[STAR1] = regs[STAR1] & ~TXE
-    elif off == STAR1:
-        # Only AF/BERR/ARLO can be cleared by firmware (W0C semantics:
-        # writing 0 clears, writing 1 leaves alone).
-        clearable = AF | BERR | ARLO
-        regs[STAR1] = (regs[STAR1] & ~clearable) | (regs[STAR1] & val & clearable)
-    else:
-        regs[off] = val
-    pass  # recompute happens unconditionally below
-
-# ---------------- Test-harness injection ----------------
-elif request.IsWrite and request.Offset == INJ_START:
-    # value bit 0 = R/W direction (1 = controller is reading)
-    is_read = bool(request.Value & 1)
-    regs[STAR1] = (regs[STAR1] & ~STOPF) | ADDR
-    regs[STAR2] = BUSY | (TRA if is_read else 0)
-elif request.IsWrite and request.Offset == INJ_RX:
-    # Controller-side byte arriving at target. Latches into DATAR + RXNE.
-    regs[DATAR] = request.Value & 0xFF
-    regs[STAR1] = regs[STAR1] | RXNE
-elif request.IsRead and request.Offset == INJ_TX:
-    # Controller pulling a byte from the target. Whatever firmware last
-    # wrote to DATAR is returned; mark TXE so the ISR is invited to
-    # stage the next byte.
-    request.Value = regs[DATAR] & 0xFF
-    regs[STAR1] = regs[STAR1] | TXE
-elif request.IsWrite and request.Offset == INJ_STOP:
-    regs[STAR1] = regs[STAR1] | STOPF
-    regs[STAR2] = 0
-elif request.IsWrite and request.Offset == INJ_NACK:
-    regs[STAR1] = regs[STAR1] | AF
-elif request.IsRead and request.Offset == IRQ_STATE:
-    request.Value = (1 if ev_irq else 0) | (2 if er_irq else 0)
-
-# IRQ recompute runs after every access — read or write, firmware or test
-# injection. Real silicon's IRQ output is level-sensitive; we treat it as
-# such by always raising PFIC pending while the condition holds. The PFIC
-# OR-merges pending bits, and the in-flight ISR has mstatus.MIE=0 so
-# spurious re-raises during ISR execution don't cause re-entry.
-if not request.IsInit:
-    ev_irq = bool(regs[CTLR2] & ITEVTEN and (regs[STAR1] & (ADDR | STOPF | BTF) or
-                  (regs[CTLR2] & ITBUFEN and regs[STAR1] & (RXNE | TXE))))
-    er_irq = bool(regs[CTLR2] & ITERREN and regs[STAR1] & (BERR | ARLO | AF))
-    if ev_irq:
-        self.GetMachine()["sysbus.pfic"].WriteDoubleWord(0xFE0, I2C1_EV_VEC)
-    if er_irq:
-        self.GetMachine()["sysbus.pfic"].WriteDoubleWord(0xFE0, I2C1_ER_VEC)
-'''
-
-// --- Interrupt controller (PFIC + WCH-extended CLIC space) ------------------
-// CH32V003 PFIC uses the ARM NVIC register layout (ISER at +0x100 etc.) at
-// 0xE000E000; WCH adds its own config regs at 0xE000F000.
-//
-// This Python model tracks the enable/pending state firmware sets via
-// NVIC_EnableIRQ() and translates "fire IRQ N" into cpu@11 (machine
-// external) assertion. Two non-silicon magic offsets bridge the bits
-// Renode standard MEI dispatch can't model on its own:
-//
-//   RAISE   (write 0xFE0): cross-peripheral signal. The I2C peripheral
-//                          writes its vector number here when it wants
-//                          to fire an interrupt; PFIC ORs that into
-//                          pending and reschedules.
-//   CLAIM   (read 0xFD0):  reads return the highest-priority pending
-//                          enabled vector and atomically clear it from
-//                          pending. Used by the PC=0x2C hook to figure
-//                          out which handler to dispatch to. 0xFFFFFFFF
-//                          when nothing's pending.
-//
-// PFIC also force-sets mie.MEIE=1 on init, working around the fact that
-// real silicon's QingKe core gates interrupts only via PFIC enable bits
-// — ch32fun never writes the mie CSR.
-
-pfic: Python.PythonPeripheral @ sysbus 0xE000E000
-    size: 0x1000
-    initable: true
-    script: '''
-ISER0, ICER0, ISPR0, ICPR0, IABR0 = 0x100, 0x180, 0x200, 0x280, 0x300
-CLAIM, RAISE = 0xFD0, 0xFE0
-
-if request.IsInit:
-    enable = 0
-    pending = 0
-    regs = {}
-    # Note: mie.MEIE must be set externally (.resc does `cpu MIE 0x800`
-    # after platform load). Assigning to cpu.MIE from inside a Python
-    # peripheral fails with a RegisterValue type-mismatch in IronPython.
-
-elif request.IsRead:
-    off = request.Offset
-    if off == ISER0 or off == ICER0:
-        request.Value = enable
-    elif off == ISPR0 or off == ICPR0:
-        request.Value = pending
-    elif off == IABR0:
-        request.Value = 0
-    elif off == CLAIM:
-        candidate = pending & enable
-        if candidate == 0:
-            request.Value = 0xFFFFFFFF
-        else:
-            for n in range(32):
-                if candidate & (1 << n):
-                    pending = pending & ~(1 << n)
-                    if (pending & enable) == 0:
-                        self.GetMachine()["sysbus.cpu"].OnGPIO(11, False)
-                    request.Value = n
-                    break
-    else:
-        request.Value = regs.get(off, 0)
-
-elif request.IsWrite:
-    off = request.Offset
-    val = request.Value
-    if off == ISER0:
-        enable = enable | val
-    elif off == ICER0:
-        enable = enable & ~val
-    elif off == ISPR0:
-        pending = pending | val
-    elif off == ICPR0:
-        pending = pending & ~val
-    elif off == RAISE:
-        pending = pending | (1 << (val & 0x1F))
-    else:
-        regs[off] = val
-    if (pending & enable) != 0:
-        self.GetMachine()["sysbus.cpu"].OnGPIO(11, True)
-'''
-
-pficCfg: Memory.ArrayMemory @ sysbus 0xE000F000
-    size: 0x1000

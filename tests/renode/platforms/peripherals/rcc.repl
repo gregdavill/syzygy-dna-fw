@@ -1,0 +1,24 @@
+// CH32V003 RCC stub.
+//
+// Mirrors HSI/HSE/PLL EN bits in CTLR into their *RDY counterparts, and
+// CFGR0.SW into SWS, so ch32fun's clock bring-up spin-loops complete
+// immediately. Everything else is plain read-back storage.
+
+rcc: Python.PythonPeripheral @ sysbus 0x40021000
+    size: 0x400
+    initable: true
+    script: '''
+if request.IsInit:
+    regs = {}
+elif request.IsRead:
+    request.Value = regs.get(request.Offset, 0)
+elif request.IsWrite:
+    val = request.Value
+    if request.Offset == 0x00:       # CTLR: HSION/HSEON/PLLON -> *RDY
+        if val & (1 << 0):  val |= (1 << 1)
+        if val & (1 << 16): val |= (1 << 17)
+        if val & (1 << 24): val |= (1 << 25)
+    elif request.Offset == 0x04:     # CFGR0: SW -> SWS (clock-switch status)
+        val = (val & ~(0b11 << 2)) | ((val & 0b11) << 2)
+    regs[request.Offset] = val
+'''
