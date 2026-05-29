@@ -1,10 +1,7 @@
 #pragma once
 
 // Per-project ch32fun configuration for the SYZYGY DNA firmware.
-// ch32fun.h includes this; the defines below select the chip family and
-// runtime features.
-
-#define CH32V003                  1
+// ch32fun.h includes this; the defines below select runtime features.
 
 #define FUNCONF_USE_HSI           1   // internal 24 MHz HSI oscillator
 #define FUNCONF_USE_HSE           0

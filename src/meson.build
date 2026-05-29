@@ -26,7 +26,7 @@ firmware_raw = executable(
   dependencies        : ch32fun_dep,
   cpp_args            : firmware_defs,
   c_args              : firmware_defs,
-  link_depends        : files('../ldscripts/ch32v003.ld'),
+  link_depends        : files('../ldscripts' / ldscript_name),
   build_by_default    : false,
 )
 

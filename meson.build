@@ -15,15 +15,25 @@ project(
   ],
 )
 
-# This project is cross-only: there is no native code to build any more. The
-# only on-host artefact is the Python DNA patcher (tools/dna_patch.py), and
-# its --self-test runs as a meson test below.
-assert(meson.is_cross_build(), 'configure with --cross-file cross/ch32v003.ini')
+# This project is cross-only
+assert(meson.is_cross_build(), 'configure with --cross-file cross/ch32v003.ini (or cross/ch32v005.ini)')
+
+# Target chip is selected by the cross-file's `chip` property (see cross/*.ini).
+chip = meson.get_external_property('chip', 'ch32v003')
+if chip == 'ch32v003'
+  chip_args = ['-DCH32V003=1']                  # RV32EC, 16 KB flash / 2 KB SRAM
+elif chip == 'ch32v005'
+  chip_args = ['-DCH32V005=1', '-DCH32V00x=1']  # RV32EC, 32 KB flash / 6 KB SRAM
+else
+  error('Unknown chip "@0@" — expected ch32v003 or ch32v005'.format(chip))
+endif
+ldscript_name = chip + '.ld'
 
 # Flags that apply identically to C and C++ — emit one symbol per
 # function/data item so --gc-sections can drop unused ones at link time.
 common_optim = ['-ffunction-sections', '-fdata-sections', '-fno-common']
 
+add_project_arguments(chip_args, language : ['c', 'cpp'])
 add_project_arguments(common_optim, language : 'c')
 add_project_arguments(
   common_optim + [
@@ -42,7 +52,7 @@ add_project_link_arguments(
   # don't use any of their symbols anyway. -nolibc keeps libgcc going
   # through the driver (so multilib lookup still picks rv32ec/ilp32e).
   '-nolibc',
-  '-T' + meson.project_source_root() / 'ldscripts' / 'ch32v003.ld',
+  '-T' + meson.project_source_root() / 'ldscripts' / ldscript_name,
   language : ['c', 'cpp'],
 )
 

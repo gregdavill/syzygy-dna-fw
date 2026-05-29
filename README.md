@@ -1,12 +1,16 @@
 # syzygy-dna
 
-SYZYGY DNA peripheral firmware for the **CH32V003F4U6** (RISC-V RV32EC,
-16 KB flash, 2 KB SRAM).
+SYZYGY DNA peripheral firmware for small low cost WCH RISC-V RV32EC microcontrollers.
+
+| Target | Cross-file | Flash | SRAM |
+|--------|------------|-------|------|
+| **CH32V003F4U6** | `cross/ch32v003.ini` | 16 KB | 2 KB |
+| **CH32V005D6U6** | `cross/ch32v005.ini` | 32 KB | 6 KB |
 
 Implements the I2C-responder side of the [SYZYGY DNA Specification
 v1.1](https://syzygyfpga.io/wp-content/uploads/2020/05/Syzygy-DNA-Specification-V1p1.pdf):
 
-- R_GA voltage on PA2 → 7-bit I²C address (`0x30 … 0x3F`)
+- R_GA voltage on PA2 → 7-bit I2C address (`0x30 … 0x3F`)
 - I2C target on PC1 (SDA) / PC2 (SCL), 16-bit sub-address framing
 - Firmware register file (FW & DNA versions, EEPROM size)
 - 40-byte DNA header + ASCII strings, CRC-16/CCITT-FALSE protected,
@@ -17,9 +21,9 @@ v1.1](https://syzygyfpga.io/wp-content/uploads/2020/05/Syzygy-DNA-Specification-
 ```
 .
 ├── meson.build / meson.options    top-level build, options
-├── cross/ch32v003.ini             riscv-none-elf cross-file
-├── ldscripts/ch32v003.ld          linker script
-├── vendor/ch32v003/               ch32fun submodule wrapper
+├── cross/*.ini             riscv-none-elf meson cross-file
+├── ldscripts/*.ld          linker script (per target)
+├── vendor/ch32v003/               ch32fun submodule wrapper (all WCH chips)
 ├── src/
 │   ├── main.cpp
 │   ├── system_init.{hpp,cpp}      clocks, PA2/PC1/PC2 GPIO mux
@@ -27,8 +31,7 @@ v1.1](https://syzygyfpga.io/wp-content/uploads/2020/05/Syzygy-DNA-Specification-
 │   ├── i2c_target.{hpp,cpp}       I2C target state machine
 │   ├── register_map.{hpp,cpp}     16-bit subaddr dispatcher
 │   └── dna/
-│       ├── dna_content.hpp        reservation of the 4 KB DNA slot
-│       └── dna_content.cpp        the placeholder array (patched post-link)
+│       └── dna_content.cpp        Blank placeholder array (patched post-link)
 └── tools/
     ├── dna_patch.py               YAML -> DNA blob -> patch into ELF
     ├── dna_example.yaml           default identity injected post-link by meson
@@ -39,7 +42,7 @@ v1.1](https://syzygyfpga.io/wp-content/uploads/2020/05/Syzygy-DNA-Specification-
 
 ```sh
 nix-shell
-meson setup build-fw --cross-file cross/ch32v003.ini
+meson setup build-fw --cross-file cross/ch32v003.ini   # or cross/ch32v005.ini
 meson compile -C build-fw
 # Produces build-fw/src/syzygy-dna.{elf,bin,hex}
 ```

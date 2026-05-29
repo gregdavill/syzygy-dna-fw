@@ -43,8 +43,13 @@ inline void store_and_advance(std::uint8_t byte) {
 
 void i2c_target_start(std::uint8_t address_7bit, std::uint32_t bus_speed_hz) {
     // Toggle peripheral reset to clear residual state, then enable the clock.
+#if defined(CH32V003)
     RCC->APB1PRSTR |=  RCC_APB1Periph_I2C1;
     RCC->APB1PRSTR &= ~RCC_APB1Periph_I2C1;
+#else
+    RCC->PB1PRSTR |=  RCC_APB1Periph_I2C1;
+    RCC->PB1PRSTR &= ~RCC_APB1Periph_I2C1;
+#endif
 
     I2C1->CTLR1 |= I2C_CTLR1_SWRST;
     I2C1->CTLR1 &= ~I2C_CTLR1_SWRST;

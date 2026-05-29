@@ -25,10 +25,19 @@ constexpr std::array<std::uint16_t, 16> kNominalMv = {
     1535, 1341, 1137,  933,  738,  541,  342,  153,
 };
 
-// CH32V003 ADC: 10-bit, Vref = VDDA (3.3 V). LSB ~= 3.223 mV.
-// Convert raw counts -> mV via integer math: mv = raw * 3300 / 1023.
+// ADC reference is VDDA (3.3 V). Resolution differs by chip; the full-scale
+// count doubles as the result mask since each value is 2^n - 1.
+//   CH32V003     -> 10-bit (full scale 1023)
+//   CH32V005/6/7 -> 12-bit (full scale 4095)
+#if defined(CH32V003)
+constexpr std::uint16_t kAdcFullScale = 1023;
+#else
+constexpr std::uint16_t kAdcFullScale = 4095;
+#endif
+
+// Convert raw counts -> mV via integer math: mv = raw * 3300 / full_scale.
 constexpr std::uint16_t raw_to_mv(std::uint16_t raw) {
-    return static_cast<std::uint16_t>((static_cast<std::uint32_t>(raw) * 3300u) / 1023u);
+    return static_cast<std::uint16_t>((static_cast<std::uint32_t>(raw) * 3300u) / kAdcFullScale);
 }
 
 // One-time ADC1 configuration + calibration for channel 0 (PA2). The
@@ -42,10 +51,10 @@ void adc_init_pa2() {
     // Sampling time: longest (241 cycles for channel 0) to settle 10 kΩ source.
     ADC1->SAMPTR2 = 0b111;                // SMP0 = 111
 
-    ADC1->CTLR2 |= ADC_RSTCAL;
-    while (ADC1->CTLR2 & ADC_RSTCAL) { /* wait */ }
-    ADC1->CTLR2 |= ADC_CAL;
-    while (ADC1->CTLR2 & ADC_CAL) { /* wait */ }
+    ADC1->CTLR2 |= CTLR2_RSTCAL_Set;
+    while (ADC1->CTLR2 & CTLR2_RSTCAL_Set) { /* wait */ }
+    ADC1->CTLR2 |= CTLR2_CAL_Set;
+    while (ADC1->CTLR2 & CTLR2_CAL_Set) { /* wait */ }
 }
 
 // Trigger one ADC1 conversion and return the raw 10-bit count. The
@@ -54,7 +63,7 @@ void adc_init_pa2() {
 std::uint16_t adc_sample_pa2() {
     ADC1->CTLR2 |= ADC_SWSTART;
     while (!(ADC1->STATR & ADC_EOC)) { /* wait */ }
-    return static_cast<std::uint16_t>(ADC1->RDATAR & 0x3FFu);
+    return static_cast<std::uint16_t>(ADC1->RDATAR & kAdcFullScale);
 }
 
 }  // namespace
