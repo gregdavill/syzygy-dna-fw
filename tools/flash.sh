@@ -23,6 +23,6 @@ if [[ ! -f "$BIN" ]]; then
     exit 1
 fi
 
-# -w <file> <address>: write file to flash starting at address (0x00000000)
+# -w <file> flash: write to user flash.
 # -b: reboot to user code afterwards
-exec "$MINICHLINK" -w "$BIN" 0x00000000 -b
+exec "$MINICHLINK" -w "$BIN" flash -b
