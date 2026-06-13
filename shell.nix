@@ -245,7 +245,8 @@ pkgs.mkShell {
 
     # tools/dna_patch.py: rewrite the DNA blob inside a firmware ELF from YAML
     # tests/renode: pytest harness driving Renode as a subprocess
-    (pkgs.python3.withPackages (ps: with ps; [ pyelftools pyyaml pytest ]))
+    # uuid-utils: per-unit UUIDv7 serials via the `@uuid7` YAML sentinel
+    (pkgs.python3.withPackages (ps: with ps; [ pyelftools pyyaml pytest uuid-utils ]))
   ];
 
   shellHook = ''

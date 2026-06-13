@@ -35,6 +35,10 @@ MAX_VIO_RANGES = 4
 # `syzygy::dna::kPodBlob` (declared in src/dna/dna_content.hpp).
 DEFAULT_SYMBOL_NEEDLE = "kPodBlob"
 
+# YAML sentinel that asks dna_patch to mint a fresh UUIDv7 for the field.
+# UUIDv7 is sortable by creation time, which is what you want for serials.
+UUID7_SENTINEL = "@uuid7"
+
 
 # ----------------------------------------------------------------------------
 # CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, MSB-first, no reflection, no
@@ -255,6 +259,10 @@ def main(argv: list[str] | None = None) -> int:
     if not isinstance(spec, dict):
         sys.exit(f"error: {args.yaml_in} did not parse to a mapping")
 
+    if spec.get("serial") == UUID7_SENTINEL:
+        import uuid_utils
+        spec["serial"] = str(uuid_utils.uuid7())
+
     blob = build_dna_blob(spec)
 
     elf_bytes = bytearray(args.elf_in.read_bytes())
@@ -280,6 +288,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  symbol:    {sym_name} @ file offset 0x{offset:x}")
     print(f"  slot size: {slot_size} bytes  ({'fits' if len(blob) <= slot_size else 'OVERFLOW'})")
     print(f"  new blob:  {len(blob)} bytes  (header CRC-16 = 0x{crc:04X})")
+    print(f"  serial:    {spec.get('serial', '')}")
     return 0
 
 
